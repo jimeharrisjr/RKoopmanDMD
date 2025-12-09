@@ -9,3 +9,5 @@
 ^cran-comments\.md$
 ^R/main\.R$
 ^R/claudecode_sugested\.R$
+^doc$
+^Meta$
