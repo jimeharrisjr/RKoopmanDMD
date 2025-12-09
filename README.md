@@ -11,7 +11,7 @@ RKoopmanDMD implements Dynamic Mode Decomposition (DMD), a data-driven method fo
 ```r
 # Install from GitHub (development version)
 # install.packages("devtools")
-devtools::install_github("yourusername/RKoopmanDMD")
+devtools::install_github("jimeharrisjr/RKoopmanDMD")
 ```
 
 ## Quick Start
