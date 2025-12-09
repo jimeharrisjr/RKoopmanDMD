@@ -1,0 +1,28 @@
+Package: RKoopmanDMD
+Type: Package
+Title: Koopman Operator and Dynamic Mode Decomposition for Dynamical Systems
+Version: 0.1.0
+Authors@R:
+    person("James", "Harris", , "yourself@somewhere.net", role = c("aut", "cre"))
+Description: Implements Dynamic Mode Decomposition (DMD) methods for analyzing
+    and predicting dynamical systems using the Koopman operator framework.
+    Provides tools to extract dominant spatiotemporal modes from data, analyze
+    system stability through eigenvalue spectra, and forecast future states.
+    Suitable for applications in fluid dynamics, climate science, neuroscience,
+    and any field involving time-evolving systems.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Imports:
+    stats,
+    graphics
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+URL: https://github.com/yourusername/RKoopmanDMD
+BugReports: https://github.com/yourusername/RKoopmanDMD/issues

@@ -1,0 +1,11 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^LICENSE\.md$
+^README\.md$
+^NEWS\.md$
+^INTEGRATION_PLAN\.md$
+^\.github$
+^codecov\.yml$
+^cran-comments\.md$
+^R/main\.R$
+^R/claudecode_sugested\.R$

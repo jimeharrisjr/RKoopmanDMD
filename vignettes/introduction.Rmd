@@ -1,0 +1,271 @@
+---
+title: "Introduction to RKoopmanDMD"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction to RKoopmanDMD}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## What is Dynamic Mode Decomposition?
+
+Dynamic Mode Decomposition (DMD) is a data-driven method for analyzing dynamical systems. Given time-series measurements of a system, DMD extracts:
+
+1. **Modes**: Spatial patterns that characterize the system's behavior
+2. **Eigenvalues**: Complex numbers that encode how each mode evolves in time
+3. **A linear operator**: That approximates the system's dynamics
+
+DMD is closely related to the Koopman operator - an infinite-dimensional linear operator that describes how observables (functions of state) evolve for nonlinear systems. The DMD matrix provides a finite-dimensional approximation to this operator.
+
+## When to Use DMD
+
+DMD is useful when you want to:
+
+- Understand the dominant dynamical patterns in your data
+- Predict future states of a system
+- Identify oscillation frequencies and growth/decay rates
+- Determine if a system is stable or unstable
+- Reduce a high-dimensional system to its essential dynamics
+
+## Getting Started
+
+```{r setup}
+library(RKoopmanDMD)
+```
+
+### Data Format
+
+RKoopmanDMD expects data as a matrix where:
+
+- **Rows** represent state variables (spatial dimensions)
+- **Columns** represent time snapshots
+
+```{r data-format}
+# Example: 2D oscillator sampled at 100 time points
+t <- seq(0, 10, by = 0.1)
+x <- cos(2 * pi * 0.5 * t)
+y <- sin(2 * pi * 0.5 * t)
+
+# Combine into matrix: 2 state variables x 101 time points
+X <- rbind(x, y)
+dim(X)
+```
+
+### Basic DMD Analysis
+
+```{r basic-dmd}
+# Fit DMD model
+model <- dmd(X)
+
+# Print summary
+print(model)
+```
+
+The `dmd()` function returns an object containing:
+
+- `A`: The DMD matrix (Koopman approximation)
+- `modes`: DMD modes (eigenvectors in physical space)
+- `eigenvalues`: Complex eigenvalues
+- `amplitudes`: Initial mode contributions
+- `rank`: Number of modes retained
+
+### Understanding Eigenvalues
+
+Eigenvalues are the key to understanding system dynamics:
+
+```{r eigenvalues}
+# Get eigenvalues
+lambdas <- model$eigenvalues
+
+# Examine properties
+data.frame(
+  magnitude = Mod(lambdas),
+  phase = Arg(lambdas),
+  real = Re(lambdas),
+  imag = Im(lambdas)
+)
+```
+
+**Interpreting eigenvalues:**
+
+- **Magnitude < 1**: Mode is decaying (stable)
+- **Magnitude = 1**: Mode is persistent (marginally stable)
+- **Magnitude > 1**: Mode is growing (unstable)
+- **Phase**: Determines oscillation frequency
+
+### Visualizing the Spectrum
+
+```{r plot-spectrum, fig.cap="Eigenvalue spectrum showing modes on the unit circle (marginally stable)"}
+plot(model, which = 1)
+```
+
+## Prediction
+
+### Forecasting Future States
+
+Use `predict()` to forecast beyond your training data:
+
+```{r prediction}
+# Predict 50 steps ahead
+future <- predict(model, n_ahead = 50)
+
+# Plot original + forecast
+t_future <- max(t) + seq(0.1, 5, by = 0.1)
+
+par(mfrow = c(1, 2))
+# Time series
+plot(t, X[1,], type = "l", col = "blue", lwd = 2,
+     xlim = c(0, 15), ylim = c(-1.2, 1.2),
+     xlab = "Time", ylab = "State 1",
+     main = "Forecast")
+lines(t_future, future[1,], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Training", "Forecast"),
+       col = c("blue", "red"), lty = 1:2, lwd = 2)
+
+# Phase portrait
+plot(X[1,], X[2,], type = "l", col = "blue", lwd = 2,
+     xlab = "State 1", ylab = "State 2",
+     main = "Phase Portrait")
+lines(future[1,], future[2,], col = "red", lwd = 2, lty = 2)
+```
+
+### Prediction from Custom Initial Conditions
+
+You can start prediction from any state:
+
+```{r custom-initial}
+# Predict from a different starting point
+custom_start <- c(0.5, 0.3)
+custom_forecast <- predict(model, n_ahead = 30, x0 = custom_start)
+
+# This is useful for "what-if" analysis
+plot(custom_forecast[1,], custom_forecast[2,], type = "l",
+     xlab = "State 1", ylab = "State 2",
+     main = "Trajectory from custom initial condition")
+points(custom_start[1], custom_start[2], pch = 19, col = "red", cex = 2)
+```
+
+## Analyzing Stability
+
+### Stability Check
+
+```{r stability}
+stability <- dmd_stability(model)
+print(stability)
+```
+
+### Detailed Spectrum Analysis
+
+For physical interpretation, use `dmd_spectrum()`:
+
+```{r spectrum}
+# Analyze with known time step
+spectrum <- dmd_spectrum(model, dt = 0.1)
+print(spectrum[, c("mode", "magnitude", "frequency", "stability")])
+```
+
+## Reconstruction and Error Assessment
+
+### Reconstructing Training Data
+
+Test how well DMD captures the dynamics:
+
+```{r reconstruction}
+X_recon <- dmd_reconstruct(model)
+
+# Compare original and reconstruction
+par(mfrow = c(1, 1))
+plot(t, X[1,], type = "l", col = "blue", lwd = 2,
+     xlab = "Time", ylab = "State 1",
+     main = "Original vs Reconstruction")
+lines(t, X_recon[1,], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Original", "DMD Reconstruction"),
+       col = c("blue", "red"), lty = 1:2, lwd = 2)
+```
+
+### Quantifying Error
+
+```{r error}
+errors <- dmd_error(model, X)
+cat("RMSE:", errors$rmse, "\n")
+cat("Relative Error:", errors$relative_error, "\n")
+```
+
+## Example: Damped Oscillator
+
+A more realistic example with decay:
+
+```{r damped-oscillator}
+# Generate damped oscillator data
+set.seed(42)
+n <- 100
+dt <- 0.1
+t <- seq(0, (n-1)*dt, by = dt)
+
+# Damped spiral
+x1 <- exp(-0.05*t) * cos(2*pi*t)
+x2 <- exp(-0.05*t) * sin(2*pi*t)
+X_damped <- rbind(x1, x2)
+
+# Fit DMD
+model_damped <- dmd(X_damped)
+
+# Summary shows it's stable
+summary(model_damped)
+```
+
+```{r damped-plots, fig.height=4}
+par(mfrow = c(1, 2))
+
+# Eigenvalue spectrum (inside unit circle = stable)
+plot(model_damped, which = 1)
+
+# Forecast continues the decay
+future_damped <- predict(model_damped, n_ahead = 50)
+t_all <- c(t, max(t) + seq(dt, 50*dt, by = dt))
+X_all <- cbind(X_damped, future_damped)
+
+plot(t_all, X_all[1,], type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "State 1",
+     main = "Damped Oscillator Forecast")
+abline(v = max(t), lty = 3, col = "gray50")
+text(max(t), max(X_all[1,]), "Forecast starts", pos = 4)
+```
+
+## Tips for Best Results
+
+1. **Sufficient data**: DMD needs enough snapshots to capture the dynamics. At least 10-20 samples per oscillation period.
+
+2. **Rank selection**: By default, `dmd()` auto-selects rank to capture 99% of variance. For noisy data, consider specifying a lower rank.
+
+3. **Centering**: If your data has a non-zero mean, consider `center = TRUE` in `dmd()`.
+
+4. **Stationarity**: DMD assumes dynamics are constant. For time-varying systems, consider windowed DMD.
+
+```{r rank-selection}
+# Example: manually specify rank
+model_r2 <- dmd(X, rank = 2)
+model_r2$rank
+```
+
+## Next Steps
+
+- Explore eigenvalue interpretation for your specific application
+- Try DMD on higher-dimensional systems
+- Use mode analysis to identify dominant patterns
+- Combine with domain knowledge for physical insights
+
+## References
+
+1. Schmid, P. J. (2010). Dynamic mode decomposition of numerical and experimental data. *Journal of Fluid Mechanics*, 656, 5-28.
+
+2. Kutz, J. N., Brunton, S. L., Brunton, B. W., & Proctor, J. L. (2016). *Dynamic Mode Decomposition: Data-Driven Modeling of Complex Systems*. SIAM.
