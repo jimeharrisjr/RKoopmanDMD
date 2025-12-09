@@ -13,7 +13,7 @@
 #'   \describe{
 #'     \item{"modes"}{(Default) Uses eigenvalue evolution of modes. More
 #'       accurate for long-term predictions and provides insight into
-#'       modal contributions.
+#'       modal contributions.}
 #'     \item{"matrix"}{Direct iterated matrix multiplication. Faster but
 #'       may accumulate numerical errors over many steps.}
 #'   }

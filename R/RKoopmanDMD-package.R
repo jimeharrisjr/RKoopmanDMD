@@ -1,6 +1,3 @@
-#' @keywords internal
-"_PACKAGE"
-
 #' RKoopmanDMD: Koopman Operator and Dynamic Mode Decomposition
 #'
 #' @description
@@ -51,6 +48,5 @@
 #' approximation of the Koopman operator: Extending dynamic mode decomposition.
 #' Journal of Nonlinear Science, 25(6), 1307-1346.
 #'
-#' @docType package
-#' @name RKoopmanDMD-package
-NULL
+#' @keywords internal
+"_PACKAGE"
