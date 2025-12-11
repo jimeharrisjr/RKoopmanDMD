@@ -21,8 +21,11 @@ Imports:
 Suggests:
     testthat (>= 3.0.0),
     knitr,
-    rmarkdown
+    rmarkdown,
+    plotly
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/yourusername/RKoopmanDMD
 BugReports: https://github.com/yourusername/RKoopmanDMD/issues
+Depends: 
+    R (>= 2.10)

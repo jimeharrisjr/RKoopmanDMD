@@ -74,6 +74,42 @@ A `dmd` object contains:
   - `|eigenvalue| > 1`: Growing mode (unstable)
 - **`amplitudes`**: Initial contribution of each mode
 
+## Example: Satellite Trajectory Prediction
+
+The package includes real satellite position data from the IDAO 2020 Competition. Here's how to predict satellite positions using DMD:
+
+```r
+library(RKoopmanDMD)
+
+# Load satellite data
+data(sat0)
+
+# Prepare state matrix (position + velocity)
+positions <- as.matrix(sat0[, c("x", "y", "z")])
+velocities <- as.matrix(sat0[, c("Vx", "Vy", "Vz")])
+state_matrix <- t(cbind(positions, velocities))
+
+# Train on first 600 points
+X_train <- state_matrix[, 1:600]
+model <- dmd(X_train)
+
+# Predict next 100 positions
+last_state <- X_train[, ncol(X_train)]
+predictions <- predict(model, n_ahead = 100, x0 = last_state)
+
+# 3D visualization with plotly
+library(plotly)
+plot_ly() %>%
+  add_trace(x = X_train[1,], y = X_train[2,], z = X_train[3,],
+            type = "scatter3d", mode = "lines",
+            line = list(color = "blue"), name = "Training") %>%
+  add_trace(x = predictions[1,], y = predictions[2,], z = predictions[3,],
+            type = "scatter3d", mode = "lines",
+            line = list(color = "red"), name = "Predicted")
+```
+
+See `vignette("satellite-prediction")` for a complete tutorial with validation and error analysis.
+
 ## Example: Analyzing a Spiral System
 
 ```r

@@ -1,0 +1,315 @@
+---
+title: "Predicting Satellite Positions with DMD"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Predicting Satellite Positions with DMD}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 6
+)
+```
+
+## Introduction
+
+This vignette demonstrates how to use Dynamic Mode Decomposition (DMD) to predict satellite trajectories. We'll use the `sat0` dataset included in the package, which contains real satellite position and velocity data from the IDAO 2020 Competition.
+
+Satellites follow orbital mechanics governed by gravitational forces, making their trajectories highly predictable with the right modeling approach. DMD is well-suited for this task because it can capture the underlying dynamics from observed data without requiring explicit knowledge of the governing equations.
+
+## Loading the Data
+
+```{r setup, message=FALSE}
+library(RKoopmanDMD)
+
+# Load the satellite data
+data(sat0)
+
+# Examine the structure
+str(sat0)
+head(sat0)
+```
+
+The dataset contains:
+
+- `x`, `y`, `z`: Real 3D coordinates of the satellite
+- `Vx`, `Vy`, `Vz`: Velocity components
+- `epoch`: Timestamp of each measurement
+- Simulated versions (`x_sim`, etc.) for comparison
+
+## Preparing Data for DMD
+
+DMD expects a matrix where rows are state variables and columns are time snapshots. We'll use both position and velocity as state variables, giving us a 6-dimensional state space.
+
+```{r prepare-data}
+# Extract position and velocity columns
+# Use real (not simulated) values
+positions <- as.matrix(sat0[, c("x", "y", "z")])
+velocities <- as.matrix(sat0[, c("Vx", "Vy", "Vz")])
+
+# Combine into state matrix (6 state variables)
+# Transpose so rows = variables, columns = time
+state_matrix <- t(cbind(positions, velocities))
+rownames(state_matrix) <- c("x", "y", "z", "Vx", "Vy", "Vz")
+
+cat("State matrix dimensions:", nrow(state_matrix), "variables x",
+    ncol(state_matrix), "time points\n")
+```
+
+## Training the DMD Model
+
+We'll use a portion of the data for training and reserve the rest for validation.
+
+```{r train-model}
+# Use first 600 points for training, rest for validation
+n_train <- 600
+n_total <- ncol(state_matrix)
+
+X_train <- state_matrix[, 1:n_train]
+X_test <- state_matrix[, (n_train + 1):n_total]
+
+cat("Training points:", ncol(X_train), "\n")
+cat("Test points:", ncol(X_test), "\n")
+
+# Fit DMD model
+model <- dmd(X_train)
+print(model)
+```
+
+## Analyzing the Model
+
+Let's examine the eigenvalues to understand the dynamics:
+
+```{r analyze-model}
+# Check stability
+stability <- dmd_stability(model)
+print(stability)
+
+# Get spectrum analysis
+spectrum <- dmd_spectrum(model)
+print(spectrum[, c("mode", "magnitude", "frequency", "stability")])
+```
+
+```{r plot-eigenvalues, fig.cap="Eigenvalue spectrum of the satellite DMD model"}
+# Visualize eigenvalue spectrum
+plot(model, which = 1)
+```
+
+## Predicting Future Positions
+
+Now let's predict the next 100 positions beyond our training data:
+
+```{r predict}
+# Get the last state from training data as initial condition
+last_train_state <- X_train[, ncol(X_train)]
+
+# Predict 100 steps ahead
+n_predict <- 100
+predictions <- predict(model, n_ahead = n_predict, x0 = last_train_state)
+
+# Extract predicted positions
+pred_x <- predictions[1, ]
+pred_y <- predictions[2, ]
+pred_z <- predictions[3, ]
+
+cat("Predicted", n_predict, "future positions\n")
+```
+
+## Comparing with Actual Data
+
+Let's compare our predictions with the actual test data (where available):
+
+```{r compare, fig.height=8}
+# Number of test points we can compare
+n_compare <- min(n_predict, ncol(X_test))
+
+par(mfrow = c(3, 1))
+
+# X coordinate
+plot(1:n_compare, X_test[1, 1:n_compare], type = "l", col = "blue", lwd = 2,
+     xlab = "Time Step", ylab = "X Position",
+     main = "X Coordinate: Actual vs Predicted")
+lines(1:n_compare, pred_x[1:n_compare], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Actual", "Predicted"), col = c("blue", "red"),
+       lty = c(1, 2), lwd = 2)
+
+# Y coordinate
+plot(1:n_compare, X_test[2, 1:n_compare], type = "l", col = "blue", lwd = 2,
+     xlab = "Time Step", ylab = "Y Position",
+     main = "Y Coordinate: Actual vs Predicted")
+lines(1:n_compare, pred_y[1:n_compare], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Actual", "Predicted"), col = c("blue", "red"),
+       lty = c(1, 2), lwd = 2)
+
+# Z coordinate
+plot(1:n_compare, X_test[3, 1:n_compare], type = "l", col = "blue", lwd = 2,
+     xlab = "Time Step", ylab = "Z Position",
+     main = "Z Coordinate: Actual vs Predicted")
+lines(1:n_compare, pred_z[1:n_compare], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Actual", "Predicted"), col = c("blue", "red"),
+       lty = c(1, 2), lwd = 2)
+```
+
+## 3D Visualization with plotly
+
+Now let's create an interactive 3D visualization of the satellite trajectory and predictions using plotly:
+```{r plotly-3d, fig.height=7, message=FALSE, warning=FALSE}
+# Check if plotly is available
+if (requireNamespace("plotly", quietly = TRUE)) {
+  library(plotly)
+
+  # Training trajectory
+  train_x <- X_train[1, ]
+  train_y <- X_train[2, ]
+  train_z <- X_train[3, ]
+
+  # Create the 3D plot
+  fig <- plot_ly() %>%
+    # Training data (observed trajectory)
+    add_trace(
+      x = train_x, y = train_y, z = train_z,
+      type = "scatter3d",
+      mode = "lines",
+      line = list(color = "blue", width = 3),
+      name = "Training Data"
+    ) %>%
+    # Predicted trajectory
+    add_trace(
+      x = pred_x, y = pred_y, z = pred_z,
+      type = "scatter3d",
+      mode = "lines",
+      line = list(color = "red", width = 3),
+      name = "DMD Prediction (100 steps)"
+    ) %>%
+    # Mark the transition point
+    add_trace(
+      x = last_train_state[1],
+      y = last_train_state[2],
+      z = last_train_state[3],
+      type = "scatter3d",
+      mode = "markers",
+      marker = list(color = "green", size = 8, symbol = "diamond"),
+      name = "Prediction Start"
+    ) %>%
+    # Layout
+    layout(
+      title = "Satellite Trajectory: Observed and Predicted",
+      scene = list(
+        xaxis = list(title = "X Position"),
+        yaxis = list(title = "Y Position"),
+        zaxis = list(title = "Z Position"),
+        aspectmode = "data"
+      ),
+      legend = list(x = 0.02, y = 0.98)
+    )
+
+  fig
+} else {
+  message("Install plotly for interactive 3D visualization: install.packages('plotly')")
+}
+```
+
+## Prediction Error Analysis
+
+Let's quantify the prediction accuracy:
+
+```{r error-analysis}
+if (ncol(X_test) > 0) {
+  n_compare <- min(n_predict, ncol(X_test))
+
+  # Calculate position errors
+  pos_errors <- sqrt(
+    (pred_x[1:n_compare] - X_test[1, 1:n_compare])^2 +
+    (pred_y[1:n_compare] - X_test[2, 1:n_compare])^2 +
+    (pred_z[1:n_compare] - X_test[3, 1:n_compare])^2
+  )
+
+  cat("Position Prediction Errors (Euclidean distance):\n")
+  cat("  Mean error:", round(mean(pos_errors), 4), "\n")
+  cat("  Max error:", round(max(pos_errors), 4), "\n")
+  cat("  Error at step 10:", round(pos_errors[min(10, n_compare)], 4), "\n")
+  cat("  Error at step 50:", round(pos_errors[min(50, n_compare)], 4), "\n")
+
+  # Plot error growth over time
+  par(mfrow = c(1, 1))
+  plot(1:n_compare, pos_errors, type = "l", col = "darkred", lwd = 2,
+       xlab = "Prediction Step", ylab = "Position Error",
+       main = "Prediction Error Over Time")
+}
+```
+
+## 3D Comparison Plot
+
+Compare training, test, and predicted trajectories together:
+
+```{r comparison-3d, fig.height=7, message=FALSE, warning=FALSE}
+if (requireNamespace("plotly", quietly = TRUE)) {
+  library(plotly)
+
+  n_compare <- min(n_predict, ncol(X_test))
+
+  fig2 <- plot_ly() %>%
+    # Training data
+    add_trace(
+      x = train_x, y = train_y, z = train_z,
+      type = "scatter3d",
+      mode = "lines",
+      line = list(color = "blue", width = 2),
+      name = "Training Data",
+      opacity = 0.7
+    ) %>%
+    # Actual test trajectory
+    add_trace(
+      x = X_test[1, 1:n_compare],
+      y = X_test[2, 1:n_compare],
+      z = X_test[3, 1:n_compare],
+      type = "scatter3d",
+      mode = "lines",
+      line = list(color = "green", width = 3),
+      name = "Actual Future"
+    ) %>%
+    # Predicted trajectory
+    add_trace(
+      x = pred_x[1:n_compare],
+      y = pred_y[1:n_compare],
+      z = pred_z[1:n_compare],
+      type = "scatter3d",
+      mode = "lines",
+      line = list(color = "red", width = 3, dash = "dash"),
+      name = "DMD Prediction"
+    ) %>%
+    layout(
+      title = "Satellite Trajectory Comparison",
+      scene = list(
+        xaxis = list(title = "X"),
+        yaxis = list(title = "Y"),
+        zaxis = list(title = "Z"),
+        aspectmode = "data"
+      )
+    )
+
+  fig2
+}
+```
+
+## Summary
+
+In this vignette, we demonstrated how DMD can be used for satellite trajectory prediction:
+
+1. **Data Preparation**: Combined position and velocity into a 6D state space
+2. **Model Training**: Used DMD to learn the dynamics from observed data
+3. **Prediction**: Forecasted 100 future positions
+4. **Validation**: Compared predictions against actual data
+5. **Visualization**: Created interactive 3D plots with plotly
+
+DMD successfully captures the orbital dynamics and produces accurate short-term predictions. The prediction error typically grows with time, which is expected for any dynamical system prediction. For satellite tracking applications, the model could be periodically updated with new observations to maintain accuracy.
+
+## References
+
+1. International Data Analytics Olympiad 2020 (IDAO) Competition Data
+2. Schmid, P. J. (2010). Dynamic mode decomposition of numerical and experimental data. *Journal of Fluid Mechanics*, 656, 5-28.
