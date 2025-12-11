@@ -17,7 +17,25 @@
 print.dmd <- function(x, ...) {
   cat("Dynamic Mode Decomposition Model\n")
   cat("================================\n")
-  cat(sprintf("  State variables:  %d\n", x$data_dim[1]))
+
+  # Show lifting info if present
+  if (!is.null(x$lifting)) {
+    cat(sprintf("  Original vars:    %d\n", x$n_vars_original))
+    cat(sprintf("  Lifted vars:      %d\n", x$n_vars_lifted))
+    lift_desc <- if (is.character(x$lifting)) {
+      x$lifting
+    } else if (is.function(x$lifting)) {
+      "custom function"
+    } else if (is.list(x$lifting)) {
+      paste0(x$lifting$type, " (parametric)")
+    } else {
+      "unknown"
+    }
+    cat(sprintf("  Lifting:          %s\n", lift_desc))
+  } else {
+    cat(sprintf("  State variables:  %d\n", x$data_dim[1]))
+  }
+
   cat(sprintf("  Time snapshots:   %d\n", x$data_dim[2]))
   cat(sprintf("  Rank used:        %d\n", x$rank))
   cat(sprintf("  Data centered:    %s\n", if (x$center) "yes" else "no"))
@@ -37,6 +55,9 @@ print.dmd <- function(x, ...) {
 
   cat("\nUse summary() for detailed eigenvalue analysis.\n")
   cat("Use plot() to visualize the eigenvalue spectrum.\n")
+  if (!is.null(x$lifting)) {
+    cat("Use dmd_lift() to inspect lifting transformation.\n")
+  }
 
   invisible(x)
 }
@@ -119,7 +140,11 @@ summary.dmd <- function(object, ...) {
       eigenvalue_table = eig_table,
       stability = overall_stability,
       singular_values = sv_info,
-      call = object$call
+      call = object$call,
+      # Lifting info
+      lifting = object$lifting,
+      n_vars_original = object$n_vars_original,
+      n_vars_lifted = object$n_vars_lifted
     ),
     class = "summary.dmd"
   )
@@ -140,7 +165,22 @@ print.summary.dmd <- function(x, ...) {
   cat("====================================\n\n")
 
   cat("Data:\n")
-  cat(sprintf("  State variables:  %d\n", x$n_vars))
+  if (!is.null(x$lifting)) {
+    cat(sprintf("  Original vars:    %d\n", x$n_vars_original))
+    cat(sprintf("  Lifted vars:      %d\n", x$n_vars_lifted))
+    lift_desc <- if (is.character(x$lifting)) {
+      x$lifting
+    } else if (is.function(x$lifting)) {
+      "custom function"
+    } else if (is.list(x$lifting)) {
+      paste0(x$lifting$type, " (parametric)")
+    } else {
+      "unknown"
+    }
+    cat(sprintf("  Lifting:          %s\n", lift_desc))
+  } else {
+    cat(sprintf("  State variables:  %d\n", x$n_vars))
+  }
   cat(sprintf("  Time snapshots:   %d\n", x$n_time))
   cat(sprintf("  Rank used:        %d\n", x$rank))
   cat(sprintf("  Data centered:    %s\n\n", if (x$centered) "yes" else "no"))

@@ -10,6 +10,23 @@
 #'   (default), rank is automatically selected to capture 99% of variance.
 #' @param center Logical; if `TRUE`, the data is centered by subtracting the
 #'   row means before analysis. Default is `FALSE`.
+#' @param lifting Lifting function specification for extended DMD. Can be:
+#'   \describe{
+#'     \item{NULL}{(default) No lifting, standard DMD}
+#'     \item{character}{Built-in lifting: `"poly2"`, `"poly3"`, `"poly4"`,
+#'       `"poly_cross2"`, `"poly_cross3"`, `"trig"`, `"trig2"`,
+#'       `"delay2"`, `"delay3"`, `"delay5"`}
+#'     \item{function}{Custom lifting function taking matrix X and returning
+#'       lifted matrix with same number of columns}
+#'     \item{list}{Parametric specification, e.g.,
+#'       `list(type = "poly", degree = 4)` or
+#'       `list(type = "rbf", centers = centers_matrix, sigma = 0.5)`}
+#'   }
+#'   See [list_lifting_functions()] for available options.
+#' @param observables Integer vector specifying which rows of the lifted state
+#'   correspond to the original observable states. Default is `1:nrow(X)`,
+#'   assuming the first n rows are the original states. Used for projecting
+#'   predictions back to observable space.
 #'
 #' @return An object of class `"dmd"` containing:
 #' \describe{
@@ -31,6 +48,11 @@
 #'   \item{X_mean}{Row means if centering was applied, otherwise NULL.}
 #'   \item{dt}{Time step (currently set to 1; for future extension).}
 #'   \item{call}{The matched function call.}
+#'   \item{lifting}{The lifting specification used (NULL if none).}
+#'   \item{lifting_fn}{The actual lifting function (NULL if none).}
+#'   \item{observables}{Indices of observable states in lifted space.}
+#'   \item{n_vars_original}{Number of original state variables.}
+#'   \item{n_vars_lifted}{Number of lifted state variables.}
 #' }
 #'
 #' @details
@@ -68,15 +90,33 @@
 #' # Check eigenvalue magnitudes (should be ~1 for oscillatory system)
 #' Mod(model$eigenvalues)
 #'
+#' # Example with lifting for nonlinear dynamics
+#' t <- seq(0, 10, by = 0.1)
+#' x1 <- cos(t) + 0.3 * cos(t)^2  # Nonlinear component
+#' x2 <- sin(t)
+#' X_nonlin <- rbind(x1, x2)
+#'
+#' # Standard DMD
+#' model_std <- dmd(X_nonlin)
+#'
+#' # DMD with polynomial lifting
+#' model_lift <- dmd(X_nonlin, lifting = "poly2")
+#'
+#' # Check lifted dimensions
+#' model_lift$n_vars_original  # 2
+#' model_lift$n_vars_lifted    # 4 (x1, x2, x1^2, x2^2)
+#'
 #' @references
 #' Schmid, P. J. (2010). Dynamic mode decomposition of numerical and
 #' experimental data. Journal of Fluid Mechanics, 656, 5-28.
 #'
 #' @seealso [predict.dmd()] for forecasting, [dmd_spectrum()] for eigenvalue
-#'   analysis, [dmd_reconstruct()] for data reconstruction.
+#'   analysis, [dmd_reconstruct()] for data reconstruction,
+#'   [dmd_lift()] for inspecting lifting transformations,
+#'   [list_lifting_functions()] for available lifting options.
 #'
 #' @export
-dmd <- function(X, rank = NULL, center = FALSE) {
+dmd <- function(X, rank = NULL, center = FALSE, lifting = NULL, observables = NULL) {
 
   # Capture the call
   cl <- match.call()
@@ -84,10 +124,34 @@ dmd <- function(X, rank = NULL, center = FALSE) {
   # Validate input
   X <- validate_matrix(X, min_rows = 1, min_cols = 3)
 
+  n_vars_original <- nrow(X)
+  n_time_original <- ncol(X)
+
+  # Store original endpoints before any transformation
+  X_original_first <- X[, 1]
+  X_original_last <- X[, n_time_original]
+
+  # Apply lifting transformation if specified
+  lifting_fn <- NULL
+  if (!is.null(lifting)) {
+    lifting_fn <- make_lifting_fn(lifting, X)
+    # Allow column reduction for delay-based lifting
+    allow_col_reduction <- is_delay_lifting(lifting)
+    X <- lift_data(X, lifting_fn, allow_col_reduction = allow_col_reduction)
+
+    # Set default observables if not specified
+    if (is.null(observables)) {
+      observables <- seq_len(n_vars_original)
+    }
+  } else {
+    # No lifting - observables are all rows
+    observables <- seq_len(n_vars_original)
+  }
+
   n_vars <- nrow(X)
   n_time <- ncol(X)
 
-  # Optionally center the data
+  # Optionally center the data (after lifting)
   X_mean <- NULL
   if (center) {
     X_mean <- rowMeans(X)
@@ -144,7 +208,15 @@ dmd <- function(X, rank = NULL, center = FALSE) {
       center = center,
       X_mean = X_mean,
       dt = 1,
-      call = cl
+      call = cl,
+      # Lifting-related fields
+      lifting = lifting,
+      lifting_fn = lifting_fn,
+      observables = observables,
+      n_vars_original = n_vars_original,
+      n_vars_lifted = n_vars,
+      X_original_first = X_original_first,
+      X_original_last = X_original_last
     ),
     class = "dmd"
   )

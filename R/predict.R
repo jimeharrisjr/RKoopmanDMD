@@ -7,8 +7,9 @@
 #' @param object A `"dmd"` object created by [dmd()].
 #' @param n_ahead Integer; number of time steps to forecast. Default is 10.
 #' @param x0 Numeric vector; initial state for prediction. If `NULL` (default),
-#'   uses the last observed state from the training data. Can be any state
-#'   vector of the same dimension as the original state variables.
+#'   uses the last observed state from the training data. For models with
+#'   lifting, provide the state in the original (unlifted) space; it will
+#'   be automatically lifted.
 #' @param method Character; prediction method to use:
 #'   \describe{
 #'     \item{"modes"}{(Default) Uses eigenvalue evolution of modes. More
@@ -17,10 +18,15 @@
 #'     \item{"matrix"}{Direct iterated matrix multiplication. Faster but
 #'       may accumulate numerical errors over many steps.}
 #'   }
+#' @param return_lifted Logical; if `TRUE` and the model uses lifting,
+#'   return predictions in the full lifted space. If `FALSE` (default),
+#'   predictions are projected back to the original observable space.
 #' @param ... Additional arguments (currently unused, for S3 compatibility).
 #'
 #' @return A numeric matrix with dimensions (n_vars x n_ahead), where each
 #'   column represents the predicted state at successive future time steps.
+#'   If a lifting function was used and `return_lifted = FALSE`, the output
+#'   has dimensions (n_vars_original x n_ahead) in the original observable space.
 #'
 #' @details
 #' ## Mode-based Prediction (method = "modes")
@@ -58,11 +64,12 @@
 #' pred_matrix <- predict(model, n_ahead = 20, method = "matrix")
 #'
 #' @seealso [dmd()] for fitting the model, [dmd_reconstruct()] for
-#'   reconstructing training data.
+#'   reconstructing training data, [dmd_lift()] for examining lifting.
 #'
 #' @export
 predict.dmd <- function(object, n_ahead = 10, x0 = NULL,
-                        method = c("modes", "matrix"), ...) {
+                        method = c("modes", "matrix"),
+                        return_lifted = FALSE, ...) {
 
   # Validate inputs
   method <- match.arg(method)
@@ -72,10 +79,14 @@ predict.dmd <- function(object, n_ahead = 10, x0 = NULL,
     stop("n_ahead must be a positive integer", call. = FALSE)
   }
 
-  n_vars <- object$data_dim[1]
+  # Get dimensions - use lifted dimensions for internal computation
+  n_vars_lifted <- object$data_dim[1]
+  n_vars_original <- object$n_vars_original %||% n_vars_lifted
+  has_lifting <- !is.null(object$lifting)
 
   # Determine initial condition
   if (is.null(x0)) {
+    # Use the last state from training data
     x0 <- object$X_last
     # If data was centered, we need the uncentered version
     if (object$center) {
@@ -83,17 +94,29 @@ predict.dmd <- function(object, n_ahead = 10, x0 = NULL,
     }
   } else {
     x0 <- as.numeric(x0)
-    if (length(x0) != n_vars) {
-      stop(sprintf("x0 must have length %d (number of state variables)",
-                   n_vars), call. = FALSE)
-    }
-    # If centered, need to adjust x0
-    if (object$center) {
-      x0 <- x0 - object$X_mean
+
+    # Check if x0 is in original or lifted space
+    if (length(x0) == n_vars_original && has_lifting) {
+      # x0 is in original space - need to lift it
+      x0_matrix <- matrix(x0, ncol = 1)
+      x0 <- as.vector(lift_data(x0_matrix, object$lifting_fn))
+
+      # Apply centering if needed
+      if (object$center) {
+        x0 <- x0 - object$X_mean
+      }
+    } else if (length(x0) == n_vars_lifted) {
+      # x0 is already in lifted space
+      if (object$center) {
+        x0 <- x0 - object$X_mean
+      }
+    } else {
+      stop(sprintf("x0 must have length %d (original) or %d (lifted)",
+                   n_vars_original, n_vars_lifted), call. = FALSE)
     }
   }
 
-  # Perform prediction
+  # Perform prediction in lifted space
   if (method == "matrix") {
     predictions <- predict_matrix(object, x0, n_ahead)
   } else {
@@ -103,6 +126,11 @@ predict.dmd <- function(object, n_ahead = 10, x0 = NULL,
   # Add back the mean if data was centered
   if (object$center) {
     predictions <- predictions + object$X_mean
+  }
+
+  # Project back to observable space unless return_lifted = TRUE
+  if (!return_lifted && has_lifting) {
+    predictions <- predictions[object$observables, , drop = FALSE]
   }
 
   # Add column names for time steps

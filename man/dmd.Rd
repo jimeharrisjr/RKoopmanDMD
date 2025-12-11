@@ -4,7 +4,7 @@
 \alias{dmd}
 \title{Dynamic Mode Decomposition}
 \usage{
-dmd(X, rank = NULL, center = FALSE)
+dmd(X, rank = NULL, center = FALSE, lifting = NULL, observables = NULL)
 }
 \arguments{
 \item{X}{A numeric matrix where rows represent state variables and columns
@@ -15,6 +15,25 @@ represent time snapshots. Must have at least 2 rows and 3 columns.}
 
 \item{center}{Logical; if \code{TRUE}, the data is centered by subtracting the
 row means before analysis. Default is \code{FALSE}.}
+
+\item{lifting}{Lifting function specification for extended DMD. Can be:
+\describe{
+\item{NULL}{(default) No lifting, standard DMD}
+\item{character}{Built-in lifting: \code{"poly2"}, \code{"poly3"}, \code{"poly4"},
+\code{"poly_cross2"}, \code{"poly_cross3"}, \code{"trig"}, \code{"trig2"},
+\code{"delay2"}, \code{"delay3"}, \code{"delay5"}}
+\item{function}{Custom lifting function taking matrix X and returning
+lifted matrix with same number of columns}
+\item{list}{Parametric specification, e.g.,
+\code{list(type = "poly", degree = 4)} or
+\code{list(type = "rbf", centers = centers_matrix, sigma = 0.5)}}
+}
+See \code{\link[=list_lifting_functions]{list_lifting_functions()}} for available options.}
+
+\item{observables}{Integer vector specifying which rows of the lifted state
+correspond to the original observable states. Default is \code{1:nrow(X)},
+assuming the first n rows are the original states. Used for projecting
+predictions back to observable space.}
 }
 \value{
 An object of class \code{"dmd"} containing:
@@ -37,6 +56,11 @@ by projecting the first snapshot onto the modes.}
 \item{X_mean}{Row means if centering was applied, otherwise NULL.}
 \item{dt}{Time step (currently set to 1; for future extension).}
 \item{call}{The matched function call.}
+\item{lifting}{The lifting specification used (NULL if none).}
+\item{lifting_fn}{The actual lifting function (NULL if none).}
+\item{observables}{Indices of observable states in lifted space.}
+\item{n_vars_original}{Number of original state variables.}
+\item{n_vars_lifted}{Number of lifted state variables.}
 }
 }
 \description{
@@ -85,6 +109,22 @@ summary(model)
 # Check eigenvalue magnitudes (should be ~1 for oscillatory system)
 Mod(model$eigenvalues)
 
+# Example with lifting for nonlinear dynamics
+t <- seq(0, 10, by = 0.1)
+x1 <- cos(t) + 0.3 * cos(t)^2  # Nonlinear component
+x2 <- sin(t)
+X_nonlin <- rbind(x1, x2)
+
+# Standard DMD
+model_std <- dmd(X_nonlin)
+
+# DMD with polynomial lifting
+model_lift <- dmd(X_nonlin, lifting = "poly2")
+
+# Check lifted dimensions
+model_lift$n_vars_original  # 2
+model_lift$n_vars_lifted    # 4 (x1, x2, x1^2, x2^2)
+
 }
 \references{
 Schmid, P. J. (2010). Dynamic mode decomposition of numerical and
@@ -92,5 +132,7 @@ experimental data. Journal of Fluid Mechanics, 656, 5-28.
 }
 \seealso{
 \code{\link[=predict.dmd]{predict.dmd()}} for forecasting, \code{\link[=dmd_spectrum]{dmd_spectrum()}} for eigenvalue
-analysis, \code{\link[=dmd_reconstruct]{dmd_reconstruct()}} for data reconstruction.
+analysis, \code{\link[=dmd_reconstruct]{dmd_reconstruct()}} for data reconstruction,
+\code{\link[=dmd_lift]{dmd_lift()}} for inspecting lifting transformations,
+\code{\link[=list_lifting_functions]{list_lifting_functions()}} for available lifting options.
 }

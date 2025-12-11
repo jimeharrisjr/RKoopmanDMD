@@ -1,0 +1,503 @@
+---
+title: "Lifting Functions for Improved Model Predictions"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Lifting Functions for Improved Model Predictions}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Introduction
+
+Dynamic Mode Decomposition (DMD) approximates nonlinear dynamics with a linear operator. While this works well for systems that are already approximately linear, it struggles with strongly nonlinear systems. **Lifting functions** address this limitation by transforming the state space into a higher-dimensional feature space where the dynamics become more linear.
+
+This approach is rooted in Koopman operator theory: while a nonlinear system may be complex in its original coordinates, there exists an infinite-dimensional space of observables where the dynamics evolve linearly. Lifting functions provide a practical, finite-dimensional approximation to this space.
+
+### When to Use Lifting Functions
+
+Lifting functions are particularly useful when:
+
+- Standard DMD produces poor predictions
+- Your system has known nonlinear terms (e.g., quadratic interactions)
+- You're working with a scalar time series that comes from a higher-dimensional system
+- The system exhibits periodic behavior that's not purely sinusoidal
+
+```{r setup}
+library(RKoopmanDMD)
+```
+
+## Available Lifting Functions
+
+RKoopmanDMD provides several built-in lifting functions:
+
+```{r list-lifting}
+list_lifting_functions()
+```
+
+These can be specified as simple strings:
+
+```r
+model <- dmd(X, lifting = "poly2")
+```
+
+Or as parametric lists for more control:
+
+```r
+model <- dmd(X, lifting = list(type = "poly", degree = 5))
+```
+
+## Example 1: Polynomial Lifting for Nonlinear Dynamics
+
+Consider a system with quadratic nonlinearity. Standard DMD will struggle because it assumes linear dynamics, but adding polynomial features can capture the nonlinear relationships.
+
+### A Nonlinear Oscillator
+
+```{r nonlinear-oscillator}
+# Create a nonlinear oscillator with quadratic term
+set.seed(42)
+t <- seq(0, 10, by = 0.05)
+x1 <- cos(t) + 0.3 * cos(t)^2  # Nonlinear component
+x2 <- sin(t)
+X <- rbind(x1, x2)
+
+# Split into training and test
+n_train <- 150
+X_train <- X[, 1:n_train]
+X_test <- X[, (n_train + 1):ncol(X)]
+t_train <- t[1:n_train]
+t_test <- t[(n_train + 1):length(t)]
+```
+
+### Comparing Standard DMD vs Lifted DMD
+
+```{r compare-poly}
+# Standard DMD
+model_std <- dmd(X_train)
+
+# DMD with polynomial lifting (degree 2)
+model_poly <- dmd(X_train, lifting = "poly2")
+
+# Predict future states
+n_ahead <- ncol(X_test)
+pred_std <- predict(model_std, n_ahead = n_ahead)
+pred_poly <- predict(model_poly, n_ahead = n_ahead)
+
+cat("Standard DMD dimensions:", model_std$data_dim[1], "x", model_std$data_dim[2], "\n")
+cat("Lifted DMD dimensions:", model_poly$n_vars_lifted, "x", model_poly$data_dim[2], "\n")
+```
+
+### Visualizing Prediction Quality
+
+```{r plot-poly-comparison, fig.height=6}
+par(mfrow = c(2, 1))
+
+# State 1 (the nonlinear one)
+plot(t_train, X_train[1, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(t), ylim = range(c(X[1,], pred_std[1,], pred_poly[1,])),
+     xlab = "Time", ylab = "State 1",
+     main = "State 1 (with quadratic nonlinearity)")
+lines(t_test, X_test[1, ], col = "blue", lwd = 2)
+lines(t_test, pred_std[1, ], col = "red", lwd = 2, lty = 2)
+lines(t_test, pred_poly[1, ], col = "darkgreen", lwd = 2, lty = 3)
+abline(v = t_train[n_train], lty = 3, col = "gray50")
+legend("topright", c("Actual", "Standard DMD", "Polynomial Lifted"),
+       col = c("blue", "red", "darkgreen"), lty = c(1, 2, 3), lwd = 2, cex = 0.8)
+
+# State 2 (linear)
+plot(t_train, X_train[2, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(t), ylim = range(c(X[2,], pred_std[2,], pred_poly[2,])),
+     xlab = "Time", ylab = "State 2",
+     main = "State 2 (linear)")
+lines(t_test, X_test[2, ], col = "blue", lwd = 2)
+lines(t_test, pred_std[2, ], col = "red", lwd = 2, lty = 2)
+lines(t_test, pred_poly[2, ], col = "darkgreen", lwd = 2, lty = 3)
+abline(v = t_train[n_train], lty = 3, col = "gray50")
+```
+
+### Quantifying the Improvement
+
+```{r poly-error}
+# Calculate prediction errors
+rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2))
+}
+
+rmse_std <- rmse(X_test, pred_std[, 1:ncol(X_test)])
+rmse_poly <- rmse(X_test, pred_poly[, 1:ncol(X_test)])
+
+cat("RMSE - Standard DMD:", round(rmse_std, 4), "\n")
+cat("RMSE - Polynomial Lifted:", round(rmse_poly, 4), "\n")
+cat("Improvement:", round((1 - rmse_poly/rmse_std) * 100, 1), "%\n")
+```
+
+### Inspecting the Lifting Transformation
+
+```{r inspect-poly}
+# See what the lifting function does
+lift_info <- dmd_lift(model_poly)
+print(lift_info)
+
+# Apply lifting to a specific state
+x0 <- c(1, 0)
+lifted_x0 <- dmd_lift(model_poly, x0)
+cat("\nOriginal state:", x0, "\n")
+cat("Lifted state:", lifted_x0, "\n")
+```
+
+## Example 2: Cross-Term Polynomial Lifting
+
+When variables interact nonlinearly, polynomial cross-terms can capture these relationships.
+
+```{r cross-terms}
+# System with interaction between variables
+t <- seq(0, 8, by = 0.05)
+x1 <- cos(t)
+x2 <- sin(t)
+x3 <- x1 * x2 + 0.5 * sin(2*t)  # Interaction term
+X <- rbind(x1, x2, x3)
+
+# Split data
+n_train <- 120
+X_train <- X[, 1:n_train]
+X_test <- X[, (n_train + 1):ncol(X)]
+
+# Compare models
+model_std <- dmd(X_train)
+model_poly <- dmd(X_train, lifting = "poly2")
+model_cross <- dmd(X_train, lifting = "poly_cross2")
+
+n_ahead <- ncol(X_test)
+pred_std <- predict(model_std, n_ahead = n_ahead)
+pred_poly <- predict(model_poly, n_ahead = n_ahead)
+pred_cross <- predict(model_cross, n_ahead = n_ahead)
+
+# Calculate errors
+cat("Standard DMD RMSE:", round(rmse(X_test, pred_std), 4), "\n")
+cat("Polynomial (no cross) RMSE:", round(rmse(X_test, pred_poly), 4), "\n")
+cat("Polynomial (with cross) RMSE:", round(rmse(X_test, pred_cross), 4), "\n")
+```
+
+```{r plot-cross, fig.height=4}
+# Visualize the interaction variable
+plot(t[1:n_train], X_train[3, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(t), ylim = range(c(X[3,], pred_std[3,], pred_cross[3,])),
+     xlab = "Time", ylab = "State 3",
+     main = "Interaction Variable (x1 * x2)")
+lines(t[(n_train+1):length(t)], X_test[3, ], col = "blue", lwd = 2)
+lines(t[(n_train+1):length(t)], pred_std[3, ], col = "red", lwd = 2, lty = 2)
+lines(t[(n_train+1):length(t)], pred_cross[3, ], col = "darkgreen", lwd = 2, lty = 3)
+abline(v = t[n_train], lty = 3, col = "gray50")
+legend("topright", c("Actual", "Standard DMD", "Cross-term Lifted"),
+       col = c("blue", "red", "darkgreen"), lty = c(1, 2, 3), lwd = 2, cex = 0.8)
+```
+
+## Example 3: Time-Delay Embedding for Scalar Time Series
+
+When you only observe a single variable from a higher-dimensional system, time-delay embedding reconstructs the state space from the history.
+
+This is based on Takens' embedding theorem: for a dynamical system, the state space can be reconstructed from delayed observations of a single variable.
+
+```{r delay-embedding}
+# Generate a scalar observation from a 3D system (Lorenz projection)
+# Simulate simple chaotic-like dynamics
+set.seed(123)
+n <- 300
+dt <- 0.02
+x <- numeric(n)
+x[1] <- 1
+for (i in 2:n) {
+  # Logistic-like map with some complexity
+  x[i] <- 3.9 * x[i-1] * (1 - x[i-1]) + 0.01 * sin(i * dt)
+}
+
+# Create matrix format (1 row)
+Y <- matrix(x, nrow = 1)
+
+# Split data
+n_train <- 200
+Y_train <- Y[, 1:n_train, drop = FALSE]
+Y_test <- Y[, (n_train + 1):n, drop = FALSE]
+```
+
+```{r compare-delay}
+# Standard DMD on scalar series - very limited
+model_scalar <- dmd(Y_train, rank = 1)
+
+# With delay embedding - reconstructs higher-dimensional dynamics
+model_delay <- dmd(Y_train, lifting = "delay3")
+
+# Note: delay embedding reduces usable time points
+cat("Original training points:", ncol(Y_train), "\n")
+cat("After delay embedding:", model_delay$data_dim[2], "\n")
+cat("Lifted dimensions:", model_delay$n_vars_lifted, "\n")
+```
+
+```{r plot-delay, fig.height=5}
+# Predict ahead
+n_ahead <- 50
+
+# Standard prediction
+pred_scalar <- predict(model_scalar, n_ahead = n_ahead)
+
+# Delay-embedded prediction
+pred_delay <- predict(model_delay, n_ahead = n_ahead)
+
+# Compare
+actual_future <- Y_test[1, 1:min(n_ahead, ncol(Y_test))]
+n_compare <- length(actual_future)
+
+par(mfrow = c(1, 1))
+plot(1:n_compare, actual_future, type = "l", col = "blue", lwd = 2,
+     xlab = "Prediction Step", ylab = "Value",
+     main = "Scalar Time Series: Standard vs Delay-Embedded DMD",
+     ylim = range(c(actual_future, pred_scalar[1, 1:n_compare], pred_delay[1, 1:n_compare])))
+lines(1:n_compare, pred_scalar[1, 1:n_compare], col = "red", lwd = 2, lty = 2)
+lines(1:n_compare, pred_delay[1, 1:n_compare], col = "darkgreen", lwd = 2, lty = 3)
+legend("topright", c("Actual", "Standard DMD", "Delay Embedded"),
+       col = c("blue", "red", "darkgreen"), lty = c(1, 2, 3), lwd = 2)
+
+cat("\nRMSE - Standard:", round(rmse(actual_future, pred_scalar[1, 1:n_compare]), 4), "\n")
+cat("RMSE - Delay Embedded:", round(rmse(actual_future, pred_delay[1, 1:n_compare]), 4), "\n")
+```
+
+## Example 4: Trigonometric Lifting for Periodic Systems
+
+Trigonometric lifting is useful for systems with oscillatory dynamics that aren't purely sinusoidal.
+
+```{r trig-lifting}
+# System with amplitude modulation
+t <- seq(0, 12, by = 0.05)
+envelope <- 1 + 0.3 * sin(0.5 * t)  # Slowly varying envelope
+x1 <- envelope * cos(2 * t)
+x2 <- envelope * sin(2 * t)
+X <- rbind(x1, x2)
+
+# Split data
+n_train <- 180
+X_train <- X[, 1:n_train]
+X_test <- X[, (n_train + 1):ncol(X)]
+t_train <- t[1:n_train]
+t_test <- t[(n_train + 1):length(t)]
+
+# Compare standard vs trigonometric lifting
+model_std <- dmd(X_train)
+model_trig <- dmd(X_train, lifting = "trig2")
+
+n_ahead <- ncol(X_test)
+pred_std <- predict(model_std, n_ahead = n_ahead)
+pred_trig <- predict(model_trig, n_ahead = n_ahead)
+
+cat("Standard DMD vars:", model_std$data_dim[1], "\n")
+cat("Trig-lifted DMD vars:", model_trig$n_vars_lifted, "\n")
+```
+
+```{r plot-trig, fig.height=4}
+plot(t_train, X_train[1, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(t), ylim = range(c(X[1,], pred_std[1,], pred_trig[1,])),
+     xlab = "Time", ylab = "State 1",
+     main = "Amplitude-Modulated Oscillation")
+lines(t_test, X_test[1, ], col = "blue", lwd = 2)
+lines(t_test, pred_std[1, ], col = "red", lwd = 2, lty = 2)
+lines(t_test, pred_trig[1, ], col = "purple", lwd = 2, lty = 3)
+abline(v = t_train[n_train], lty = 3, col = "gray50")
+legend("topright", c("Actual", "Standard DMD", "Trig Lifted"),
+       col = c("blue", "red", "purple"), lty = c(1, 2, 3), lwd = 2, cex = 0.8)
+
+cat("RMSE - Standard:", round(rmse(X_test, pred_std), 4), "\n")
+cat("RMSE - Trig Lifted:", round(rmse(X_test, pred_trig), 4), "\n")
+```
+
+## Example 5: Custom Lifting Functions
+
+For domain-specific problems, you can define custom lifting functions.
+
+```{r custom-lifting}
+# System with known physical features
+t <- seq(0, 8, by = 0.05)
+r <- 1 + 0.3 * t / max(t)  # Slowly increasing radius
+x1 <- r * cos(2 * t)
+x2 <- r * sin(2 * t)
+X <- rbind(x1, x2)
+
+# Custom lifting that includes radius
+my_lift <- function(X) {
+  r_sq <- X[1, ]^2 + X[2, ]^2     # Squared radius
+  product <- X[1, ] * X[2, ]       # xy interaction
+  rbind(X, r_sq, product)
+}
+
+# Must specify which rows are the original observables
+model_custom <- dmd(X, lifting = my_lift, observables = 1:2)
+
+# Inspect
+lift_info <- dmd_lift(model_custom)
+cat("Original dimension:", lift_info$original_dim, "\n")
+cat("Lifted dimension:", lift_info$lifted_dim, "\n")
+cat("Observable indices:", lift_info$observables, "\n")
+```
+
+```{r plot-custom, fig.height=5}
+# Compare predictions
+n_train <- 120
+X_train <- X[, 1:n_train]
+X_test <- X[, (n_train + 1):ncol(X)]
+
+model_std <- dmd(X_train)
+model_custom <- dmd(X_train, lifting = my_lift, observables = 1:2)
+
+n_ahead <- ncol(X_test)
+pred_std <- predict(model_std, n_ahead = n_ahead)
+pred_custom <- predict(model_custom, n_ahead = n_ahead)
+
+# Phase portrait
+par(mfrow = c(1, 2))
+plot(X_train[1, ], X_train[2, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(X[1,]) * 1.2, ylim = range(X[2,]) * 1.2,
+     xlab = "x1", ylab = "x2", main = "Standard DMD")
+lines(X_test[1, ], X_test[2, ], col = "blue", lwd = 2)
+lines(pred_std[1, ], pred_std[2, ], col = "red", lwd = 2, lty = 2)
+
+plot(X_train[1, ], X_train[2, ], type = "l", col = "blue", lwd = 2,
+     xlim = range(X[1,]) * 1.2, ylim = range(X[2,]) * 1.2,
+     xlab = "x1", ylab = "x2", main = "Custom Lifted DMD")
+lines(X_test[1, ], X_test[2, ], col = "blue", lwd = 2)
+lines(pred_custom[1, ], pred_custom[2, ], col = "darkgreen", lwd = 2, lty = 2)
+
+cat("RMSE - Standard:", round(rmse(X_test, pred_std), 4), "\n")
+cat("RMSE - Custom Lifted:", round(rmse(X_test, pred_custom), 4), "\n")
+```
+
+## Example 6: Real-World Application - Satellite Data
+
+Let's apply lifting functions to the satellite trajectory data to see if we can improve predictions.
+
+```{r satellite-lifting}
+# Load satellite data
+data(sat0)
+
+# Prepare state matrix (position + velocity)
+positions <- as.matrix(sat0[, c("x", "y", "z")])
+velocities <- as.matrix(sat0[, c("Vx", "Vy", "Vz")])
+state_matrix <- t(cbind(positions, velocities))
+rownames(state_matrix) <- c("x", "y", "z", "Vx", "Vy", "Vz")
+
+# Train/test split
+n_train <- 550
+X_train <- state_matrix[, 1:n_train]
+X_test <- state_matrix[, (n_train + 1):ncol(state_matrix)]
+
+# Fit models
+model_std <- dmd(X_train)
+model_poly <- dmd(X_train, lifting = "poly2")
+model_cross <- dmd(X_train, lifting = "poly_cross2")
+
+cat("Standard DMD rank:", model_std$rank, "\n")
+cat("Poly lifted rank:", model_poly$rank, "\n")
+cat("Cross-term lifted rank:", model_cross$rank, "\n")
+```
+
+```{r satellite-predict}
+# Predict
+n_ahead <- min(100, ncol(X_test))
+pred_std <- predict(model_std, n_ahead = n_ahead)
+pred_poly <- predict(model_poly, n_ahead = n_ahead)
+pred_cross <- predict(model_cross, n_ahead = n_ahead)
+
+# Calculate position errors
+pos_error <- function(pred, actual) {
+  sqrt((pred[1, ] - actual[1, ])^2 +
+       (pred[2, ] - actual[2, ])^2 +
+       (pred[3, ] - actual[3, ])^2)
+}
+
+n_compare <- min(n_ahead, ncol(X_test))
+err_std <- pos_error(pred_std[, 1:n_compare], X_test[, 1:n_compare])
+err_poly <- pos_error(pred_poly[, 1:n_compare], X_test[, 1:n_compare])
+err_cross <- pos_error(pred_cross[, 1:n_compare], X_test[, 1:n_compare])
+```
+
+```{r plot-satellite-error, fig.height=4}
+plot(1:n_compare, err_std, type = "l", col = "red", lwd = 2,
+     xlab = "Prediction Step", ylab = "Position Error",
+     main = "Satellite Position Prediction Error",
+     ylim = c(0, max(c(err_std, err_poly, err_cross))))
+lines(1:n_compare, err_poly, col = "blue", lwd = 2, lty = 2)
+lines(1:n_compare, err_cross, col = "darkgreen", lwd = 2, lty = 3)
+legend("topleft",
+       c(paste("Standard (mean:", round(mean(err_std), 2), ")"),
+         paste("Poly2 (mean:", round(mean(err_poly), 2), ")"),
+         paste("Cross2 (mean:", round(mean(err_cross), 2), ")")),
+       col = c("red", "blue", "darkgreen"), lty = 1:3, lwd = 2, cex = 0.8)
+```
+
+## Best Practices and Guidelines
+
+### Choosing the Right Lifting Function
+
+| System Characteristics | Recommended Lifting |
+|------------------------|---------------------|
+| Polynomial nonlinearity (x², x³) | `poly2`, `poly3` |
+| Variable interactions (xy terms) | `poly_cross2`, `poly_cross3` |
+| Periodic/oscillatory dynamics | `trig`, `trig2` |
+| Scalar time series | `delay3`, `delay5` |
+| Complex nonlinearity | Custom function or RBF |
+
+### Tips for Success
+
+1. **Start simple**: Try `poly2` or `poly_cross2` first. Only increase complexity if needed.
+
+2. **Check dimensionality**: Lifting increases state dimension. Higher dimensions require more data.
+   ```r
+   dmd_lift(model)  # Check the expansion ratio
+   ```
+
+3. **Validate improvement**: Always compare lifted vs standard DMD on held-out data.
+
+4. **Use domain knowledge**: If you know the physics, encode it in a custom lifting function.
+
+5. **Watch for overfitting**: Too many lifted features can lead to overfitting, especially with limited data.
+
+### Computational Considerations
+
+- **Memory**: Lifted matrices can be much larger. `poly_cross3` on 10 variables creates 285 features!
+- **Rank selection**: Consider reducing rank for lifted models to avoid capturing noise.
+- **Delay embedding**: Reduces usable time points by the number of delays.
+
+```{r computational-note}
+# Example: feature expansion
+n_vars <- 5
+for (lifting in c("poly2", "poly3", "poly_cross2", "poly_cross3")) {
+  test_X <- matrix(rnorm(n_vars * 10), nrow = n_vars)
+  model <- dmd(test_X, lifting = lifting)
+  cat(lifting, ": ", n_vars, " -> ", model$n_vars_lifted, " features\n", sep = "")
+}
+```
+
+## Summary
+
+Lifting functions extend DMD to handle nonlinear systems by mapping data into a feature space where dynamics are more linear. Key points:
+
+1. **Standard DMD** approximates dynamics as linear; this fails for nonlinear systems.
+2. **Lifting functions** add features (polynomials, trig functions, delays) that capture nonlinearity.
+3. **Predictions improve** when the lifting matches the system's nonlinear structure.
+4. **Custom functions** let you encode domain knowledge.
+5. **Trade-offs exist** between expressiveness and overfitting/computational cost.
+
+The best lifting function depends on your specific system. When in doubt, start with `poly2` and compare against standard DMD.
+
+## References
+
+1. Williams, M. O., Kevrekidis, I. G., & Rowley, C. W. (2015). A data-driven approximation of the Koopman operator: Extending dynamic mode decomposition. *Journal of Nonlinear Science*, 25(6), 1307-1346.
+
+2. Brunton, S. L., Brunton, B. W., Proctor, J. L., & Kutz, J. N. (2016). Koopman invariant subspaces and finite linear representations of nonlinear dynamical systems for control. *PLoS ONE*, 11(2), e0150171.
+
+3. Takens, F. (1981). Detecting strange attractors in turbulence. In *Dynamical Systems and Turbulence*, Springer.

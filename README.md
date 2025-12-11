@@ -46,6 +46,7 @@ cat("Relative error:", errors$relative_error, "\n")
 ## Key Features
 
 - **DMD Analysis**: Extract modes, eigenvalues, and the Koopman matrix from time-series data
+- **Lifting Functions**: Transform state space to capture nonlinear dynamics with extended DMD
 - **Flexible Prediction**: Forecast from any initial condition using mode-based or matrix methods
 - **Stability Analysis**: Determine system stability from eigenvalue spectrum
 - **Rich Diagnostics**: Print, summary, and plot methods for model inspection
@@ -61,6 +62,8 @@ cat("Relative error:", errors$relative_error, "\n")
 | `dmd_reconstruct()` | Reconstruct data from modes |
 | `dmd_stability()` | Check system stability |
 | `dmd_error()` | Compute reconstruction error |
+| `dmd_lift()` | Inspect lifting transformation |
+| `list_lifting_functions()` | Show available lifting options |
 
 ## Understanding the Output
 
@@ -73,6 +76,98 @@ A `dmd` object contains:
   - `|eigenvalue| = 1`: Persistent mode (marginally stable)
   - `|eigenvalue| > 1`: Growing mode (unstable)
 - **`amplitudes`**: Initial contribution of each mode
+
+## Lifting Functions for Nonlinear Dynamics
+
+Standard DMD finds a linear operator to approximate dynamics. For systems with nonlinear behavior, **lifting functions** transform the state space into a higher-dimensional feature space where the dynamics become approximately linear. This is the key idea behind Extended DMD (EDMD) and Koopman operator theory.
+
+### When to Use Lifting
+
+- Your system has nonlinear dynamics (e.g., `x' = x²`, oscillators with harmonics)
+- Standard DMD gives poor predictions
+- You want to capture higher-order interactions between state variables
+
+### Built-in Lifting Functions
+
+| Option | Description | Example |
+|--------|-------------|---------|
+| `"poly2"`, `"poly3"` | Polynomial powers | `x, x², x³` |
+| `"poly_cross2"` | Polynomials with cross-terms | `x, y, x², xy, y²` |
+| `"trig"` | Trigonometric | `x, sin(x), cos(x)` |
+| `"delay2"`, `"delay3"` | Time-delay embedding | `x(t), x(t-1), x(t-2)` |
+
+### Example: Nonlinear Oscillator
+
+```r
+library(RKoopmanDMD)
+
+# System with nonlinear component
+t <- seq(0, 10, by = 0.1)
+x1 <- cos(t) + 0.3 * cos(t)^2  # Nonlinear term
+x2 <- sin(t)
+X <- rbind(x1, x2)
+
+# Standard DMD
+model_std <- dmd(X)
+
+# DMD with polynomial lifting (captures x² terms)
+model_lift <- dmd(X, lifting = "poly2")
+print(model_lift)
+#> Dynamic Mode Decomposition Model
+#> ================================
+#>   Original vars:    2
+#>   Lifted vars:      4
+#>   Lifting:          poly2
+#>   ...
+
+# Predictions return original 2D space automatically
+pred <- predict(model_lift, n_ahead = 20)
+dim(pred)  # 2 x 20
+
+# Inspect the lifting transformation
+dmd_lift(model_lift)
+#> $original_dim
+#> [1] 2
+#> $lifted_dim
+#> [1] 4
+#> $observables
+#> [1] 1 2
+```
+
+### Custom Lifting Functions
+
+You can define your own lifting function for domain-specific transformations:
+
+```r
+# Custom lifting: include specific nonlinear terms
+my_lift <- function(X) {
+  x <- X[1, ]
+  y <- X[2, ]
+  rbind(
+    X,           # Original states
+    x^2,         # x squared
+    x * y,       # Interaction term
+    sin(x)       # Trigonometric term
+  )
+}
+
+model <- dmd(X, lifting = my_lift, observables = 1:2)
+```
+
+### Parametric Lifting
+
+For fine-grained control, use list specifications:
+```r
+# Polynomial of degree 5
+model <- dmd(X, lifting = list(type = "poly", degree = 5))
+
+# Time-delay embedding with 4 delays
+model <- dmd(X, lifting = list(type = "delay", delays = 4))
+
+# RBF lifting with custom centers
+centers <- matrix(rnorm(10), nrow = 2, ncol = 5)
+model <- dmd(X, lifting = list(type = "rbf", centers = centers, sigma = 0.5))
+```
 
 ## Example: Satellite Trajectory Prediction
 

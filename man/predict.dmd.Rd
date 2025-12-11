@@ -4,7 +4,14 @@
 \alias{predict.dmd}
 \title{Predict Future States Using DMD}
 \usage{
-\method{predict}{dmd}(object, n_ahead = 10, x0 = NULL, method = c("modes", "matrix"), ...)
+\method{predict}{dmd}(
+  object,
+  n_ahead = 10,
+  x0 = NULL,
+  method = c("modes", "matrix"),
+  return_lifted = FALSE,
+  ...
+)
 }
 \arguments{
 \item{object}{A \code{"dmd"} object created by \code{\link[=dmd]{dmd()}}.}
@@ -12,8 +19,9 @@
 \item{n_ahead}{Integer; number of time steps to forecast. Default is 10.}
 
 \item{x0}{Numeric vector; initial state for prediction. If \code{NULL} (default),
-uses the last observed state from the training data. Can be any state
-vector of the same dimension as the original state variables.}
+uses the last observed state from the training data. For models with
+lifting, provide the state in the original (unlifted) space; it will
+be automatically lifted.}
 
 \item{method}{Character; prediction method to use:
 \describe{
@@ -24,11 +32,17 @@ modal contributions.}
 may accumulate numerical errors over many steps.}
 }}
 
+\item{return_lifted}{Logical; if \code{TRUE} and the model uses lifting,
+return predictions in the full lifted space. If \code{FALSE} (default),
+predictions are projected back to the original observable space.}
+
 \item{...}{Additional arguments (currently unused, for S3 compatibility).}
 }
 \value{
 A numeric matrix with dimensions (n_vars x n_ahead), where each
 column represents the predicted state at successive future time steps.
+If a lifting function was used and \code{return_lifted = FALSE}, the output
+has dimensions (n_vars_original x n_ahead) in the original observable space.
 }
 \description{
 Forecasts future states of a dynamical system using a fitted DMD model.
@@ -79,5 +93,5 @@ pred_matrix <- predict(model, n_ahead = 20, method = "matrix")
 }
 \seealso{
 \code{\link[=dmd]{dmd()}} for fitting the model, \code{\link[=dmd_reconstruct]{dmd_reconstruct()}} for
-reconstructing training data.
+reconstructing training data, \code{\link[=dmd_lift]{dmd_lift()}} for examining lifting.
 }
