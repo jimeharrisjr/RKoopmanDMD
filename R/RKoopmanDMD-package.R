@@ -9,9 +9,14 @@
 #' @section Main Functions:
 #' \describe{
 #'   \item{[dmd()]}{Perform Dynamic Mode Decomposition on time-series data}
+#'   \item{[hankel_dmd()]}{Krylov subspace DMD using time-delay embedding (avoids curse of dimensionality)}
+#'   \item{[gla()]}{Generalized Laplace Analysis - compute eigenfunctions via weighted time averages}
 #'   \item{[predict.dmd()]}{Forecast future states using a fitted DMD model}
 #'   \item{[dmd_spectrum()]}{Analyze the eigenvalue spectrum for stability}
 #'   \item{[dmd_reconstruct()]}{Reconstruct training data from DMD modes}
+#'   \item{[dmd_residual()]}{Compute residual for error assessment}
+#'   \item{[dmd_pseudospectrum()]}{Pseudospectral analysis for eigenvalue reliability}
+#'   \item{[dmd_convergence()]}{Estimate convergence rate of DMD approximation}
 #' }
 #'
 #' @section The Koopman Operator:
@@ -21,23 +26,42 @@
 #' operator by computing a best-fit linear map between time-shifted snapshots
 #' of the data.
 #'
+#' @section Numerical Methods:
+#' This package implements several numerical approaches based on Mezic (2020):
+#' \describe{
+#'   \item{Standard DMD}{Finite section method using SVD-based projection}
+#'   \item{Hankel-DMD}{Krylov subspace method using time-delayed observables.
+#'     Avoids the curse of dimensionality by letting dynamics select the basis.}
+#'   \item{GLA}{Generalized Laplace Analysis for direct eigenfunction computation
+#'     without constructing an operator matrix.}
+#' }
+#'
 #' @section Typical Workflow:
 #' ```
 #' # 1. Organize data as matrix (rows = variables, columns = time)
 #' X <- matrix(...)
 #'
-#' # 2. Fit DMD model
-#' model <- dmd(X)
+#' # 2. Fit DMD model (choose method based on data)
+#' model <- dmd(X)           # Standard DMD
+#' model <- hankel_dmd(y)    # For scalar time series
+#' model <- dmd(X, lifting = "poly2")  # Extended DMD with lifting
 #'
 #' # 3. Examine eigenvalues for stability
 #' summary(model)
 #' plot(model)
 #'
-#' # 4. Predict future states
+#' # 4. Assess approximation quality
+#' res <- dmd_residual(model, X)
+#' ps <- dmd_pseudospectrum(model)
+#'
+#' # 5. Predict future states
 #' future <- predict(model, n_ahead = 50)
 #' ```
 #'
 #' @references
+#' Mezic, I. (2020). On Numerical Approximations of the Koopman Operator.
+#' arXiv:2009.05883.
+#'
 #' Schmid, P. J. (2010). Dynamic mode decomposition of numerical and
 #' experimental data. Journal of Fluid Mechanics, 656, 5-28.
 #'

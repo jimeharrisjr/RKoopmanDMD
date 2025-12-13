@@ -364,3 +364,400 @@ dmd_stability <- function(object, tol = 1e-6) {
     classification = classification
   )
 }
+
+
+#' Compute DMD Residual for Error Assessment
+#'
+#' Computes the residual of the DMD approximation, which measures how well
+#' the finite-dimensional approximation captures the true Koopman operator.
+#' Based on the error analysis in Mezic (2020), Section 4.3 and 5.2.
+#'
+#' @param object A `"dmd"` or `"hankel_dmd"` object.
+#' @param X_original Optional; the original data matrix. If not provided,
+#'   uses stored data from the model (if available).
+#'
+#' @return A list containing:
+#' \describe{
+#'   \item{residual_norm}{Overall Frobenius norm of residual}
+#'   \item{residual_relative}{Residual norm relative to data norm}
+#'   \item{per_step_residual}{Vector of residual norms at each time step}
+#'   \item{per_mode_residual}{Vector of residual contributions per mode}
+#'   \item{pseudospectral_bound}{Upper bound on pseudospectral radius (epsilon)}
+#'   \item{residual_matrix}{Full residual matrix (X_pred - X_true)}
+#' }
+#'
+#' @details
+#' The residual measures the error in the finite section approximation:
+#' \deqn{r = U\tilde{\phi} - \tilde{\lambda}\tilde{\phi}}
+#'
+#' From Proposition 4.1 in Mezic (2020):
+#' \deqn{U\tilde{\phi} - \tilde{\lambda}\tilde{\phi} = \tilde{e} \cdot (U\tilde{f} - P_{\tilde{F}}U\tilde{f})}
+#'
+#' The pseudospectral bound \eqn{\epsilon} satisfies:
+#' \deqn{|U\tilde{e} \cdot \tilde{f} - \tilde{\lambda}\tilde{e} \cdot \tilde{f}| = |e_N r|}
+#'
+#' This means the computed eigenvalues are in the \eqn{\epsilon}-pseudospectrum
+#' of the true Koopman operator.
+#'
+#' @examples
+#' t <- seq(0, 10, by = 0.1)
+#' X <- rbind(cos(t), sin(t))
+#' model <- dmd(X)
+#' res <- dmd_residual(model, X)
+#' cat("Relative residual:", res$residual_relative, "\n")
+#' cat("Pseudospectral bound:", res$pseudospectral_bound, "\n")
+#'
+#' @references
+#' Mezic, I. (2020). On Numerical Approximations of the Koopman Operator.
+#' arXiv:2009.05883, Sections 4.3 and 5.2.
+#'
+#' @seealso [dmd_error()] for reconstruction error metrics,
+#'   [dmd_pseudospectrum()] for pseudospectral analysis.
+#'
+#' @export
+dmd_residual <- function(object, X_original = NULL) {
+
+  if (!inherits(object, "dmd")) {
+    stop("object must be a dmd object", call. = FALSE)
+  }
+
+  # Get data dimensions
+  n_vars <- object$data_dim[1]
+  n_time <- object$data_dim[2]
+
+  # Reconstruct predictions using the DMD matrix
+  # For each time step k, predict: x_{k+1} = A x_k
+  if (inherits(object, "hankel_dmd")) {
+    H <- object$hankel
+    X_data <- H
+  } else if (!is.null(X_original)) {
+    X_data <- validate_matrix(X_original, min_rows = 1, min_cols = 2)
+    # Apply lifting if needed
+    if (!is.null(object$lifting_fn)) {
+      X_data <- lift_data(X_data, object$lifting_fn,
+                          allow_col_reduction = is_delay_lifting(object$lifting))
+    }
+    # Center if needed
+    if (object$center) {
+      X_data <- X_data - object$X_mean
+    }
+  } else {
+    stop("X_original must be provided for standard DMD objects", call. = FALSE)
+  }
+
+  n_cols <- ncol(X_data)
+
+  # Compute one-step predictions
+  X1 <- X_data[, -n_cols, drop = FALSE]
+  X2_true <- X_data[, -1, drop = FALSE]
+  X2_pred <- object$A %*% X1
+
+  # Residual matrix
+  residual_matrix <- X2_pred - X2_true
+
+  # Overall residual norm
+  residual_norm <- sqrt(sum(residual_matrix^2))
+  data_norm <- sqrt(sum(X2_true^2))
+  residual_relative <- residual_norm / data_norm
+
+  # Per-step residual
+  per_step_residual <- sqrt(colSums(residual_matrix^2))
+
+  # Per-mode residual contribution
+  # Project residual onto each mode
+  modes <- object$modes
+  per_mode_residual <- numeric(object$rank)
+
+  for (i in seq_len(object$rank)) {
+    mode_i <- modes[, i]
+    # Project residual onto this mode direction
+    mode_contrib <- abs(t(Conj(mode_i)) %*% residual_matrix)
+    per_mode_residual[i] <- sqrt(sum(Mod(mode_contrib)^2)) / Mod(sqrt(sum(mode_i * Conj(mode_i))))
+  }
+
+  # Pseudospectral bound (eq. 102)
+  # epsilon = |e_N * r| where e_N is last component of eigenvector
+  # For each eigenvalue, compute the bound
+  eig_vecs <- safe_solve(modes, diag(n_vars))  # columns are eigenvector coefficients
+  pseudospectral_bounds <- numeric(object$rank)
+
+  for (i in seq_len(object$rank)) {
+    # Get the eigenvector in coefficient space
+    e_coef <- safe_solve(modes, modes[, i])
+    e_N <- abs(e_coef[length(e_coef)])
+    # Average residual contribution
+    r_avg <- mean(per_step_residual)
+    pseudospectral_bounds[i] <- e_N * r_avg
+  }
+
+  pseudospectral_bound <- max(pseudospectral_bounds)
+
+  list(
+    residual_norm = residual_norm,
+    residual_relative = residual_relative,
+    per_step_residual = per_step_residual,
+    per_mode_residual = per_mode_residual,
+    pseudospectral_bound = pseudospectral_bound,
+    pseudospectral_bounds = pseudospectral_bounds,
+    residual_matrix = residual_matrix
+  )
+}
+
+
+#' Pseudospectrum Analysis for DMD
+#'
+#' Computes and optionally visualizes the pseudospectrum of the DMD operator.
+#' The pseudospectrum reveals regions where eigenvalue estimates are reliable.
+#'
+#' @param object A `"dmd"` object.
+#' @param epsilon Numeric vector of epsilon values for pseudospectrum contours.
+#'   Default is `c(0.01, 0.05, 0.1, 0.2)`.
+#' @param grid_n Integer; number of grid points in each direction for
+#'   computing the pseudospectrum. Default is 100.
+#' @param xlim,ylim Limits for the complex plane grid. If NULL, automatically
+#'   determined from eigenvalues.
+#' @param plot Logical; if TRUE, produce a plot. Default is TRUE.
+#'
+#' @return A list containing:
+#' \describe{
+#'   \item{z_grid}{Complex grid points}
+#'   \item{sigma_min}{Matrix of minimum singular values of (zI - A)}
+#'   \item{eigenvalues}{DMD eigenvalues for reference}
+#'   \item{epsilon}{Epsilon values used}
+#' }
+#'
+#' @details
+#' The \eqn{\epsilon}-pseudospectrum of an operator A is defined as:
+#' \deqn{\sigma_\epsilon(A) = \{z \in \mathbb{C} : \|(zI - A)^{-1}\| \geq 1/\epsilon\}}
+#'
+#' Equivalently, it is the set of z where the minimum singular value of
+#' (zI - A) is at most \eqn{\epsilon}.
+#'
+#' From Theorem 5.1 in Mezic (2020), the Krylov subspace approximation
+#' converges in the pseudospectral sense: for any \eqn{\epsilon > 0}, for
+#' large enough n, the approximate eigenfunctions are in the
+#' \eqn{\epsilon}-pseudospectrum.
+#'
+#' @examples
+#' t <- seq(0, 10, by = 0.1)
+#' X <- rbind(cos(t), sin(t))
+#' model <- dmd(X)
+#'
+#' # Compute pseudospectrum (with plot)
+#' ps <- dmd_pseudospectrum(model)
+#'
+#' # Compute without plotting
+#' ps <- dmd_pseudospectrum(model, plot = FALSE)
+#'
+#' @references
+#' Mezic, I. (2020). On Numerical Approximations of the Koopman Operator.
+#' arXiv:2009.05883, Section 5.2.
+#'
+#' Trefethen, L.N. and Embree, M. (2005). Spectra and Pseudospectra.
+#' Princeton University Press.
+#'
+#' @export
+dmd_pseudospectrum <- function(object, epsilon = c(0.01, 0.05, 0.1, 0.2),
+                                grid_n = 100, xlim = NULL, ylim = NULL,
+                                plot = TRUE) {
+
+  if (!inherits(object, "dmd")) {
+    stop("object must be a dmd object", call. = FALSE)
+  }
+
+  A <- object$A_tilde  # Use reduced matrix for efficiency
+  lambdas <- object$eigenvalues
+  n <- nrow(A)
+
+  # Determine grid limits
+  if (is.null(xlim)) {
+    re_range <- range(Re(lambdas))
+    re_margin <- max(0.5, diff(re_range) * 0.3)
+    xlim <- c(re_range[1] - re_margin, re_range[2] + re_margin)
+  }
+
+  if (is.null(ylim)) {
+    im_range <- range(Im(lambdas))
+    im_margin <- max(0.5, diff(im_range) * 0.3)
+    ylim <- c(im_range[1] - im_margin, im_range[2] + im_margin)
+  }
+
+  # Create grid
+  x_seq <- seq(xlim[1], xlim[2], length.out = grid_n)
+  y_seq <- seq(ylim[1], ylim[2], length.out = grid_n)
+
+  # Compute minimum singular value at each grid point
+  sigma_min <- matrix(0, nrow = grid_n, ncol = grid_n)
+
+  I_n <- diag(n)
+
+  for (i in seq_len(grid_n)) {
+    for (j in seq_len(grid_n)) {
+      z <- complex(real = x_seq[i], imaginary = y_seq[j])
+      M <- z * I_n - A
+      sv <- svd(M, nu = 0, nv = 0)$d
+      sigma_min[i, j] <- min(sv)
+    }
+  }
+
+  result <- list(
+    x = x_seq,
+    y = y_seq,
+    sigma_min = sigma_min,
+    eigenvalues = lambdas,
+    epsilon = epsilon
+  )
+
+  if (plot) {
+    plot_pseudospectrum(result)
+  }
+
+  invisible(result)
+}
+
+
+#' Plot Pseudospectrum (internal)
+#' @keywords internal
+plot_pseudospectrum <- function(ps_result) {
+
+  x <- ps_result$x
+  y <- ps_result$y
+  sigma_min <- ps_result$sigma_min
+  lambdas <- ps_result$eigenvalues
+  epsilon <- ps_result$epsilon
+
+  # Draw unit circle
+  theta <- seq(0, 2 * pi, length.out = 100)
+  circle_x <- cos(theta)
+  circle_y <- sin(theta)
+
+  # Set up plot
+  graphics::plot(range(x), range(y), type = "n", asp = 1,
+                 xlab = "Real", ylab = "Imaginary",
+                 main = "DMD Pseudospectrum")
+
+  # Add contours for each epsilon
+  colors <- grDevices::heat.colors(length(epsilon) + 2)
+  colors <- colors[seq_len(length(epsilon))]
+
+  for (k in seq_along(epsilon)) {
+    graphics::contour(x, y, sigma_min, levels = epsilon[k],
+                      add = TRUE, col = colors[k], lwd = 1.5,
+                      drawlabels = TRUE)
+  }
+
+  # Add unit circle
+  graphics::lines(circle_x, circle_y, lty = 2, col = "gray50")
+
+  # Add axes
+  graphics::abline(h = 0, v = 0, col = "gray80", lty = 3)
+
+  # Add eigenvalues
+  graphics::points(Re(lambdas), Im(lambdas), pch = 19, col = "blue", cex = 1.2)
+
+  # Legend
+  graphics::legend("topright",
+                   legend = c(paste0("eps=", epsilon), "Eigenvalues", "Unit circle"),
+                   col = c(colors, "blue", "gray50"),
+                   lty = c(rep(1, length(epsilon)), NA, 2),
+                   pch = c(rep(NA, length(epsilon)), 19, NA),
+                   bty = "n", cex = 0.8)
+}
+
+
+#' Estimate Convergence Rate
+#'
+#' Estimates the convergence rate of the DMD approximation by computing
+#' eigenvalues at increasing sample sizes and measuring convergence.
+#'
+#' @param X Data matrix (n_vars x n_time).
+#' @param sample_fractions Numeric vector of fractions of data to use.
+#'   Default is `c(0.25, 0.5, 0.75, 1.0)`.
+#' @param rank Rank for DMD (NULL for auto).
+#' @param ... Additional arguments passed to [dmd()].
+#'
+#' @return A list containing:
+#' \describe{
+#'   \item{sample_sizes}{Vector of sample sizes used}
+#'   \item{eigenvalues}{List of eigenvalue vectors at each sample size}
+#'   \item{eigenvalue_changes}{Vector of max eigenvalue changes between successive fits}
+#'   \item{convergence_estimate}{Estimated convergence rate}
+#' }
+#'
+#' @details
+#' From Theorem 4.3 in Mezic (2020), for systems with pure point spectrum,
+#' the finite section approximation converges at rate O(1/m) where m is
+#' the number of samples. This function empirically estimates this rate.
+#'
+#' @examples
+#' t <- seq(0, 20, by = 0.1)
+#' X <- rbind(cos(t), sin(t))
+#' conv <- dmd_convergence(X)
+#' cat("Estimated convergence rate:", conv$convergence_estimate, "\n")
+#'
+#' @export
+dmd_convergence <- function(X, sample_fractions = c(0.25, 0.5, 0.75, 1.0),
+                             rank = NULL, ...) {
+
+  X <- validate_matrix(X, min_rows = 1, min_cols = 10)
+  n_time <- ncol(X)
+
+  sample_sizes <- floor(sample_fractions * n_time)
+  sample_sizes <- pmax(sample_sizes, 5)  # minimum 5 samples
+  sample_sizes <- unique(sample_sizes)
+
+  eigenvalues_list <- list()
+  models <- list()
+
+  for (i in seq_along(sample_sizes)) {
+    m <- sample_sizes[i]
+    X_sub <- X[, 1:m, drop = FALSE]
+
+    model <- dmd(X_sub, rank = rank, ...)
+    models[[i]] <- model
+    eigenvalues_list[[i]] <- model$eigenvalues
+  }
+
+  # Compute eigenvalue changes
+  eigenvalue_changes <- numeric(length(sample_sizes) - 1)
+
+  for (i in 2:length(sample_sizes)) {
+    # Match eigenvalues by nearest neighbor
+    prev_eig <- eigenvalues_list[[i - 1]]
+    curr_eig <- eigenvalues_list[[i]]
+
+    # Use minimum of two lengths
+    n_compare <- min(length(prev_eig), length(curr_eig))
+
+    if (n_compare > 0) {
+      # Sort by magnitude for comparison
+      prev_sorted <- sort(Mod(prev_eig), decreasing = TRUE)[1:n_compare]
+      curr_sorted <- sort(Mod(curr_eig), decreasing = TRUE)[1:n_compare]
+      eigenvalue_changes[i - 1] <- max(abs(prev_sorted - curr_sorted))
+    }
+  }
+
+  # Estimate convergence rate using log-log regression
+  # If rate is O(1/m^alpha), then log(change) ~ -alpha * log(m)
+  if (length(sample_sizes) >= 3 && any(eigenvalue_changes > 0)) {
+    valid_idx <- eigenvalue_changes > 0
+    if (sum(valid_idx) >= 2) {
+      log_m <- log(sample_sizes[-1][valid_idx])
+      log_change <- log(eigenvalue_changes[valid_idx])
+      fit <- stats::lm(log_change ~ log_m)
+      convergence_rate <- -stats::coef(fit)[2]
+    } else {
+      convergence_rate <- NA
+    }
+  } else {
+    convergence_rate <- NA
+  }
+
+  list(
+    sample_sizes = sample_sizes,
+    eigenvalues = eigenvalues_list,
+    eigenvalue_changes = eigenvalue_changes,
+    convergence_estimate = convergence_rate,
+    models = models
+  )
+}

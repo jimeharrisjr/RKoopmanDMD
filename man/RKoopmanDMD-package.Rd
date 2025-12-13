@@ -15,9 +15,14 @@ time-series data without requiring knowledge of the underlying equations.
 
 \describe{
 \item{\code{\link[=dmd]{dmd()}}}{Perform Dynamic Mode Decomposition on time-series data}
+\item{\code{\link[=hankel_dmd]{hankel_dmd()}}}{Krylov subspace DMD using time-delay embedding (avoids curse of dimensionality)}
+\item{\code{\link[=gla]{gla()}}}{Generalized Laplace Analysis - compute eigenfunctions via weighted time averages}
 \item{\code{\link[=predict.dmd]{predict.dmd()}}}{Forecast future states using a fitted DMD model}
 \item{\code{\link[=dmd_spectrum]{dmd_spectrum()}}}{Analyze the eigenvalue spectrum for stability}
 \item{\code{\link[=dmd_reconstruct]{dmd_reconstruct()}}}{Reconstruct training data from DMD modes}
+\item{\code{\link[=dmd_residual]{dmd_residual()}}}{Compute residual for error assessment}
+\item{\code{\link[=dmd_pseudospectrum]{dmd_pseudospectrum()}}}{Pseudospectral analysis for eigenvalue reliability}
+\item{\code{\link[=dmd_convergence]{dmd_convergence()}}}{Estimate convergence rate of DMD approximation}
 }
 }
 
@@ -30,25 +35,46 @@ operator by computing a best-fit linear map between time-shifted snapshots
 of the data.
 }
 
+\section{Numerical Methods}{
+
+This package implements several numerical approaches based on Mezic (2020):
+\describe{
+\item{Standard DMD}{Finite section method using SVD-based projection}
+\item{Hankel-DMD}{Krylov subspace method using time-delayed observables.
+Avoids the curse of dimensionality by letting dynamics select the basis.}
+\item{GLA}{Generalized Laplace Analysis for direct eigenfunction computation
+without constructing an operator matrix.}
+}
+}
+
 \section{Typical Workflow}{
 
 
 \if{html}{\out{<div class="sourceCode">}}\preformatted{# 1. Organize data as matrix (rows = variables, columns = time)
 X <- matrix(...)
 
-# 2. Fit DMD model
-model <- dmd(X)
+# 2. Fit DMD model (choose method based on data)
+model <- dmd(X)           # Standard DMD
+model <- hankel_dmd(y)    # For scalar time series
+model <- dmd(X, lifting = "poly2")  # Extended DMD with lifting
 
 # 3. Examine eigenvalues for stability
 summary(model)
 plot(model)
 
-# 4. Predict future states
+# 4. Assess approximation quality
+res <- dmd_residual(model, X)
+ps <- dmd_pseudospectrum(model)
+
+# 5. Predict future states
 future <- predict(model, n_ahead = 50)
 }\if{html}{\out{</div>}}
 }
 
 \references{
+Mezic, I. (2020). On Numerical Approximations of the Koopman Operator.
+arXiv:2009.05883.
+
 Schmid, P. J. (2010). Dynamic mode decomposition of numerical and
 experimental data. Journal of Fluid Mechanics, 656, 5-28.
 
