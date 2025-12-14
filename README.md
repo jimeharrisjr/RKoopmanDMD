@@ -65,6 +65,19 @@ cat("Relative error:", errors$relative_error, "\n")
 | `dmd_lift()` | Inspect lifting transformation |
 | `list_lifting_functions()` | Show available lifting options |
 
+## Advanced Methods
+
+| Function | Description |
+|----------|-------------|
+| `hankel_dmd()` | Hankel-DMD using Krylov subspace/time-delay embedding |
+| `hankel_reconstruct()` | Reconstruct time series from Hankel-DMD model |
+| `gla()` | Generalized Laplace Analysis for computing Koopman eigenfunctions |
+| `gla_reconstruct()` | Reconstruct signal using GLA model |
+| `dmd_dominant_modes()` | Extract most important DMD modes by amplitude/energy |
+| `dmd_residual()` | Compute DMD residual for error assessment |
+| `dmd_pseudospectrum()` | Pseudospectrum analysis for eigenvalue reliability |
+| `dmd_convergence()` | Estimate convergence rate of DMD approximation |
+
 ## Understanding the Output
 
 A `dmd` object contains:
@@ -247,6 +260,19 @@ plot(X[1,], X[2,], type = "l", col = "blue",
 lines(forecast[1,], forecast[2,], col = "red", lty = 2)
 ```
 
+## Vignettes
+
+The package includes detailed tutorials on various topics:
+
+| Vignette | Description |
+|----------|-------------|
+| `vignette("introduction")` | Introduction to RKoopmanDMD |
+| `vignette("satellite-prediction")` | Predicting Satellite Positions with DMD |
+| `vignette("lifting-functions")` | Lifting Functions for Improved Model Predictions |
+| `vignette("hankel-dmd")` | Hankel-DMD: Time-Delay Embedding for Scalar Time Series |
+| `vignette("generalized-laplace-analysis")` | Generalized Laplace Analysis: Computing Koopman Eigenfunctions |
+| `vignette("diagnostics")` | DMD Diagnostics: Residuals, Pseudospectra, and Convergence |
+
 ## References
 
 1. Schmid, P. J. (2010). Dynamic mode decomposition of numerical and experimental data. *Journal of Fluid Mechanics*, 656, 5-28.
@@ -254,6 +280,8 @@ lines(forecast[1,], forecast[2,], col = "red", lty = 2)
 2. Kutz, J. N., Brunton, S. L., Brunton, B. W., & Proctor, J. L. (2016). *Dynamic Mode Decomposition: Data-Driven Modeling of Complex Systems*. SIAM.
 
 3. Williams, M. O., Kevrekidis, I. G., & Rowley, C. W. (2015). A data-driven approximation of the Koopman operator. *Journal of Nonlinear Science*, 25(6), 1307-1346.
+
+4. Mezic, I. (2020). On Numerical Approximations of the Koopman Operator. arXiv:2009.05883.
 
 ## License
 
