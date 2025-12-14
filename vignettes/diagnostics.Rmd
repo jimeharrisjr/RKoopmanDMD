@@ -1,0 +1,371 @@
+---
+title: "DMD Diagnostics: Residuals, Pseudospectra, and Convergence"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{DMD Diagnostics: Residuals, Pseudospectra, and Convergence}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Introduction
+
+After fitting a DMD model, it's important to assess its quality and reliability. This vignette covers three diagnostic tools:
+
+1. **Residual Analysis**: How well does the model fit the data?
+2. **Pseudospectrum Analysis**: How reliable are the computed eigenvalues?
+3. **Convergence Estimation**: How does accuracy improve with more data?
+
+These diagnostics are based on the theoretical framework in Mezić (2020), "On Numerical Approximations of the Koopman Operator."
+
+## Setup
+
+```{r setup}
+library(RKoopmanDMD)
+```
+
+### Example Data
+
+We'll use a damped oscillator with some noise:
+
+```{r example-data}
+set.seed(42)
+dt <- 0.1
+t <- seq(0, 20, by = dt)
+
+# Damped oscillator with noise
+x1 <- exp(-0.1 * t) * cos(2 * pi * 0.5 * t) + 0.05 * rnorm(length(t))
+x2 <- exp(-0.1 * t) * sin(2 * pi * 0.5 * t) + 0.05 * rnorm(length(t))
+X <- rbind(x1, x2)
+
+# Fit DMD model
+model <- dmd(X)
+
+par(mfrow = c(1, 2))
+plot(t, X[1,], type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "x1", main = "Observable 1")
+plot(t, X[2,], type = "l", col = "coral", lwd = 2,
+     xlab = "Time", ylab = "x2", main = "Observable 2")
+```
+
+## Residual Analysis
+
+### Computing Residuals
+
+The `dmd_residual()` function computes how well the DMD operator approximates the dynamics:
+
+```{r residual-basic}
+residual <- dmd_residual(model, X)
+print(residual)
+```
+
+### Understanding Residual Metrics
+
+The residual output includes several metrics:
+
+| Metric | Description | Interpretation |
+|--------|-------------|----------------|
+| `residual_norm` | Total error in Frobenius norm | Lower is better |
+| `residual_relative` | Error relative to data magnitude | < 0.1 is typically good |
+| `per_step_residual` | Error at each time step | Identifies problematic regions |
+| `per_mode_residual` | Error contribution per mode | Identifies problematic modes |
+
+### Per-Step Analysis
+
+Examine how error evolves over time:
+
+```{r per-step, fig.height=4}
+par(mfrow = c(1, 1))
+plot(t[-1], residual$per_step_residual, type = "l",
+     col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "Residual",
+     main = "Per-Step Residual")
+```
+
+For a good model, residuals should be:
+- Small and roughly constant (not growing)
+- Not showing systematic patterns
+
+### Per-Mode Analysis
+
+Identify which modes contribute most to the error:
+
+```{r per-mode}
+cat("Per-mode residuals:\n")
+print(round(residual$per_mode_residual, 6))
+
+# Visualize
+barplot(residual$per_mode_residual,
+        names.arg = seq_along(residual$per_mode_residual),
+        xlab = "Mode", ylab = "Residual Contribution",
+        main = "Per-Mode Residual", col = "steelblue")
+```
+
+### Comparing Models
+
+Use residuals to compare different model configurations:
+
+```{r compare-models}
+# Different rank settings
+model_r1 <- dmd(X, rank = 1)
+model_r2 <- dmd(X, rank = 2)
+model_full <- dmd(X)
+
+res_r1 <- dmd_residual(model_r1, X)
+res_r2 <- dmd_residual(model_r2, X)
+res_full <- dmd_residual(model_full, X)
+
+cat("Residuals by rank:\n")
+cat("  Rank 1:", round(res_r1$residual_relative, 4), "\n")
+cat("  Rank 2:", round(res_r2$residual_relative, 4), "\n")
+cat("  Full:  ", round(res_full$residual_relative, 4), "\n")
+```
+
+## Pseudospectrum Analysis
+
+### What is the Pseudospectrum?
+
+The **ε-pseudospectrum** is the set of points where the resolvent norm exceeds 1/ε:
+
+$$\sigma_\epsilon(A) = \{z \in \mathbb{C} : \|(zI - A)^{-1}\| \geq 1/\epsilon\}$$
+
+Eigenvalues are sensitive to perturbations when they're embedded in large pseudospectral regions. This helps assess eigenvalue reliability.
+
+### Computing the Pseudospectrum
+
+```{r pseudospectrum, fig.height=6}
+# Compute and plot pseudospectrum (plot = TRUE by default)
+ps <- dmd_pseudospectrum(model, grid_n = 50)
+
+# The result contains:
+# - x, y: grid coordinates
+# - sigma_min: minimum singular value at each grid point
+# - eigenvalues: the model eigenvalues
+# - epsilon: contour levels used
+```
+
+The plot shows ε-pseudospectral contours. Eigenvalues (marked with X) surrounded by tight contours are well-determined.
+
+### Interpreting the Pseudospectrum
+
+- **Tight contours around eigenvalues**: Eigenvalues are well-determined
+- **Large, diffuse regions**: Eigenvalues are sensitive to perturbations
+- **Overlapping regions**: Eigenvalues may be difficult to distinguish
+
+### Custom Grid and Epsilon Levels
+
+```{r custom-ps, fig.height=6}
+# Focus on region near unit circle with custom epsilon levels
+ps_focused <- dmd_pseudospectrum(
+  model,
+  xlim = c(0.5, 1.2),
+  ylim = c(-0.5, 0.5),
+  grid_n = 80,
+  epsilon = c(0.05, 0.1, 0.2, 0.3)
+)
+```
+
+### Pseudospectral Bounds
+
+The pseudospectrum provides bounds on eigenvalue perturbation. For noise level ε, true eigenvalues lie within the ε-pseudospectrum with high probability:
+
+```{r ps-bounds}
+cat("Pseudospectral bounds included in residual analysis:\n")
+cat("  Bound:", residual$pseudospectral_bound, "\n")
+```
+
+## Convergence Analysis
+
+### Estimating Convergence Rate
+
+DMD approximation improves with more data. The `dmd_convergence()` function estimates how eigenvalues stabilize as sample size increases:
+
+```{r convergence}
+# Pass the data matrix directly
+conv <- dmd_convergence(X)
+cat("Sample sizes tested:", conv$sample_sizes, "\n")
+cat("Eigenvalue changes between samples:", round(conv$eigenvalue_changes, 6), "\n")
+cat("Convergence rate estimate:", round(conv$convergence_estimate, 3), "\n")
+```
+
+### Understanding Convergence Output
+
+| Field | Description |
+|-------|-------------|
+| `sample_sizes` | Number of time points used at each iteration |
+| `eigenvalues` | List of eigenvalues at each sample size |
+| `eigenvalue_changes` | Maximum eigenvalue change between successive samples |
+| `convergence_estimate` | Estimated rate of eigenvalue convergence |
+| `models` | DMD models fit at each sample size |
+
+### Visualizing Convergence
+
+```{r conv-plot}
+# Plot eigenvalue changes vs sample size
+plot(conv$sample_sizes[-1], conv$eigenvalue_changes, type = "b",
+     pch = 19, col = "steelblue", lwd = 2,
+     xlab = "Sample Size", ylab = "Max Eigenvalue Change",
+     main = "DMD Convergence", log = "y")
+grid()
+```
+
+### Interpreting Convergence
+
+- **Positive convergence rate**: Eigenvalues stabilize with more data (expected)
+- **Rate near 1**: Linear convergence (O(1/n))
+- **Rate near 2**: Quadratic convergence (fast!)
+- **Small or zero rate**: Eigenvalues haven't stabilized yet
+
+### Custom Convergence Analysis
+
+```{r custom-conv}
+# More granular analysis with custom fractions
+conv_fine <- dmd_convergence(X, sample_fractions = seq(0.3, 1.0, by = 0.1))
+
+plot(conv_fine$sample_sizes[-1], conv_fine$eigenvalue_changes, type = "b",
+     pch = 19, col = "steelblue", lwd = 2,
+     xlab = "Sample Size", ylab = "Max Eigenvalue Change",
+     main = "Fine-Grained Convergence Analysis")
+```
+
+## Practical Workflow
+
+Here's a recommended diagnostic workflow:
+
+### Step 1: Fit and Check Basic Quality
+
+```{r workflow-1}
+# Fit model
+model <- dmd(X)
+
+# Quick quality check
+cat("Basic quality metrics:\n")
+cat("  Rank:", model$rank, "\n")
+cat("  Max eigenvalue magnitude:", max(Mod(model$eigenvalues)), "\n")
+```
+
+### Step 2: Residual Analysis
+
+```{r workflow-2}
+residual <- dmd_residual(model, X)
+
+if (residual$residual_relative > 0.1) {
+  cat("Warning: High relative residual. Consider:\n")
+  cat("  - Using higher rank\n")
+  cat("  - Checking for non-stationarity\n")
+  cat("  - Using Hankel-DMD for scalar data\n")
+} else {
+  cat("Residual check passed.\n")
+}
+```
+### Step 3: Eigenvalue Reliability
+
+```{r workflow-3}
+# Check if eigenvalues are well-separated
+eigs <- model$eigenvalues
+min_separation <- min(dist(cbind(Re(eigs), Im(eigs))))
+cat("Minimum eigenvalue separation:", round(min_separation, 4), "\n")
+
+if (min_separation < 0.1) {
+  cat("Warning: Closely spaced eigenvalues may be unreliable.\n")
+  cat("Consider pseudospectrum analysis.\n")
+}
+```
+
+### Step 4: Assess Data Sufficiency
+
+```{r workflow-4}
+conv <- dmd_convergence(X)
+
+if (!is.na(conv$convergence_estimate) && conv$convergence_estimate > 0.5) {
+  cat("Model is converging. Eigenvalues stabilizing with more data.\n")
+  cat("Convergence rate:", round(conv$convergence_estimate, 2), "\n")
+} else {
+  cat("Convergence unclear. May need more data or different approach.\n")
+}
+```
+
+## Noisy vs Clean Data
+
+Diagnostics help distinguish model limitations from data quality issues:
+
+```{r noisy-comparison, fig.height=4}
+# Clean data
+t_clean <- seq(0, 20, by = 0.1)
+X_clean <- rbind(cos(t_clean), sin(t_clean))
+model_clean <- dmd(X_clean)
+
+# Noisy data
+set.seed(42)
+X_noisy <- X_clean + 0.2 * matrix(rnorm(length(X_clean)), nrow = 2)
+model_noisy <- dmd(X_noisy)
+
+# Compare residuals
+res_clean <- dmd_residual(model_clean, X_clean)
+res_noisy <- dmd_residual(model_noisy, X_noisy)
+
+par(mfrow = c(1, 2))
+
+plot(t_clean[-1], res_clean$per_step_residual, type = "l",
+     col = "steelblue", lwd = 2, ylim = c(0, max(res_noisy$per_step_residual)),
+     xlab = "Time", ylab = "Residual", main = "Clean Data")
+
+plot(t_clean[-1], res_noisy$per_step_residual, type = "l",
+     col = "coral", lwd = 2,
+     xlab = "Time", ylab = "Residual", main = "Noisy Data")
+```
+
+```{r noise-summary}
+cat("Relative residuals:\n")
+cat("  Clean data:", round(res_clean$residual_relative, 6), "\n")
+cat("  Noisy data:", round(res_noisy$residual_relative, 4), "\n")
+```
+
+## Hankel-DMD Diagnostics
+
+Residual and pseudospectrum diagnostics work with Hankel-DMD models:
+
+```{r hankel-diagnostics}
+# Scalar time series
+y <- cos(2 * pi * 0.25 * t) + 0.1 * rnorm(length(t))
+model_hankel <- hankel_dmd(y, delays = 10)
+
+# Residual (uses Hankel matrix internally)
+res_hankel <- dmd_residual(model_hankel)
+cat("Hankel-DMD relative residual:", round(res_hankel$residual_relative, 4), "\n")
+
+# Pseudospectrum works too
+ps_hankel <- dmd_pseudospectrum(model_hankel, plot = FALSE)
+cat("Pseudospectrum grid size:", length(ps_hankel$x), "x", length(ps_hankel$y), "\n")
+```
+
+## Summary
+
+| Diagnostic | Question Answered | When to Use |
+|------------|-------------------|-------------|
+| `dmd_residual` | How well does the model fit? | Always |
+| `dmd_pseudospectrum` | Are eigenvalues reliable? | When eigenvalues seem unstable |
+| `dmd_convergence` | Do I have enough data? | When considering data collection |
+
+## Key Takeaways
+
+1. **Residuals** are the first check - high residuals indicate poor model fit
+2. **Pseudospectra** reveal eigenvalue sensitivity - important for physical interpretation
+3. **Convergence analysis** guides data collection decisions
+4. **All diagnostics work with both standard DMD and Hankel-DMD**
+
+## References
+
+1. Mezić, I. (2020). On Numerical Approximations of the Koopman Operator. arXiv:2009.05883.
+
+2. Trefethen, L. N., & Embree, M. (2005). *Spectra and Pseudospectra: The Behavior of Nonnormal Matrices and Operators*. Princeton University Press.
+
+3. Dawson, S. T., Hemati, M. S., Williams, M. O., & Rowley, C. W. (2016). Characterizing and correcting for the effect of sensor noise in the dynamic mode decomposition. *Experiments in Fluids*, 57(3), 42.

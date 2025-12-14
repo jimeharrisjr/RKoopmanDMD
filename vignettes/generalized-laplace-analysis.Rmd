@@ -1,0 +1,357 @@
+---
+title: "Generalized Laplace Analysis: Computing Koopman Eigenfunctions"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Generalized Laplace Analysis: Computing Koopman Eigenfunctions}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+```
+
+## Introduction
+
+**Generalized Laplace Analysis (GLA)** is an alternative approach to DMD that computes Koopman eigenfunctions directly from trajectory data using weighted time averages. Unlike standard DMD, GLA does not require constructing an approximate operator matrix.
+
+This method is based on Theorem 3.1 in Mezić (2020), "On Numerical Approximations of the Koopman Operator."
+
+## Key Concepts
+
+### Koopman Eigenfunctions
+
+For a dynamical system with flow map $T$, a Koopman eigenfunction $\phi$ satisfies:
+
+$$\phi(Tx) = \lambda \phi(x)$$
+
+where $\lambda$ is the corresponding eigenvalue. Eigenfunctions provide intrinsic coordinates that evolve linearly in time, even for nonlinear systems.
+
+### The GLA Formula
+
+GLA computes eigenfunctions using the limit:
+
+$$\phi_k(x) = \lim_{N \to \infty} \frac{1}{N} \sum_{i=0}^{N-1} \lambda_k^{-i} f(T^i x)$$
+
+where $f$ is an observable and $\lambda_k$ is a candidate eigenvalue. This weighted average extracts the component of $f$ that evolves with eigenvalue $\lambda_k$.
+
+## Getting Started
+
+```{r setup}
+library(RKoopmanDMD)
+```
+
+### Basic Example
+
+Let's analyze a simple oscillator:
+
+```{r simple-example}
+# Generate oscillator data
+dt <- 0.1
+t <- seq(0, 30, by = dt)
+freq <- 0.1  # Hz
+y <- cos(2 * pi * freq * t)
+
+# Plot the signal
+plot(t, y, type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "Signal",
+     main = "Oscillator Time Series")
+```
+
+### Fitting GLA with Automatic Eigenvalue Estimation
+
+```{r gla-auto}
+# GLA with automatic eigenvalue estimation from preliminary DMD
+result <- gla(y, n_eigenvalues = 4)
+
+print(result)
+```
+
+The output shows:
+- **Eigenvalues**: Complex numbers encoding frequency and growth/decay
+- **Magnitude**: Should be ~1 for persistent oscillations
+- **Phase**: Encodes the oscillation frequency
+- **Converged**: Whether the time average converged
+- **Error**: How well the eigenvalue relationship is satisfied
+
+## Providing Known Eigenvalues
+
+When you know the system's eigenvalues, you can provide them directly:
+
+```{r known-eigenvalues}
+# For a discrete-time oscillator at frequency f with time step dt:
+# eigenvalue = exp(±i * 2*pi*f*dt)
+omega <- 2 * pi * freq * dt
+known_eigs <- c(exp(1i * omega), exp(-1i * omega))
+
+result_known <- gla(y, eigenvalues = known_eigs)
+print(result_known)
+```
+
+With exact eigenvalues, GLA should produce more accurate results.
+
+## Understanding GLA Output
+
+### Eigenfunctions
+
+The eigenfunctions evolve as $\phi_k(x_t) = \lambda_k^t \phi_k(x_0)$:
+
+```{r eigenfunctions, fig.height=4}
+par(mfrow = c(1, 2))
+
+# Real and imaginary parts of first eigenfunction
+phi1 <- result$eigenfunctions[1, ]
+
+plot(t, Re(phi1), type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "Re(phi)",
+     main = "Eigenfunction (Real Part)")
+
+plot(t, Im(phi1), type = "l", col = "coral", lwd = 2,
+     xlab = "Time", ylab = "Im(phi)",
+     main = "Eigenfunction (Imaginary Part)")
+```
+
+### Koopman Modes
+
+The modes $s_k$ give the contribution of each eigenfunction to the observable:
+
+```{r modes}
+cat("Koopman modes:\n")
+print(result$modes)
+```
+
+## Reconstruction
+
+Reconstruct the signal using the computed eigenfunctions and modes:
+
+```{r reconstruction}
+recon <- gla_reconstruct(result)
+
+par(mfrow = c(1, 1))
+plot(t, y, type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "Signal",
+     main = "GLA Reconstruction")
+lines(t, recon[1,], col = "red", lwd = 2, lty = 2)
+legend("topright", c("Original", "GLA Reconstruction"),
+       col = c("steelblue", "red"), lty = 1:2, lwd = 2)
+```
+
+### Selective Mode Reconstruction
+
+Reconstruct using only specific modes:
+
+```{r selective-recon, fig.height=4}
+par(mfrow = c(1, 2))
+
+# Using only first mode
+recon1 <- gla_reconstruct(result, modes_to_use = 1)
+plot(t, recon1[1,], type = "l", col = "purple", lwd = 2,
+     xlab = "Time", ylab = "Signal",
+     main = "Mode 1 Only")
+
+# Using first two modes
+recon12 <- gla_reconstruct(result, modes_to_use = 1:2)
+plot(t, recon12[1,], type = "l", col = "darkgreen", lwd = 2,
+     xlab = "Time", ylab = "Signal",
+     main = "Modes 1-2")
+```
+
+## Prediction
+
+Forecast future values using the GLA model:
+
+```{r prediction}
+n_ahead <- 50
+pred <- predict(result, n_ahead = n_ahead)
+
+# True future for comparison
+t_future <- max(t) + seq(dt, n_ahead * dt, by = dt)
+y_true <- cos(2 * pi * freq * t_future)
+
+par(mfrow = c(1, 1))
+plot(t, y, type = "l", col = "steelblue", lwd = 2,
+     xlim = c(0, max(t_future)), ylim = c(-1.2, 1.2),
+     xlab = "Time", ylab = "Signal",
+     main = "GLA Prediction")
+lines(t_future, pred[1,], col = "red", lwd = 2, lty = 2)
+lines(t_future, y_true, col = "darkgreen", lwd = 1, lty = 3)
+abline(v = max(t), col = "gray", lty = 3)
+legend("topright", c("Training", "GLA Prediction", "True"),
+       col = c("steelblue", "red", "darkgreen"), lty = c(1, 2, 3), lwd = 2)
+```
+
+## Multi-Frequency Signals
+
+GLA can decompose signals with multiple frequency components:
+
+```{r multi-freq}
+# Two-frequency signal
+y_multi <- cos(2 * pi * 0.1 * t) + 0.5 * sin(2 * pi * 0.25 * t)
+
+plot(t, y_multi, type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "Signal",
+     main = "Multi-Frequency Signal")
+```
+
+```{r multi-freq-gla}
+# Analyze with GLA
+result_multi <- gla(y_multi, n_eigenvalues = 6)
+print(result_multi)
+```
+
+Each eigenvalue pair corresponds to one frequency component.
+
+## Multivariate Time Series
+
+GLA works with multivariate data (multiple observables):
+
+```{r multivariate}
+# Two-dimensional oscillator
+X <- rbind(
+  cos(t),
+  sin(t)
+)
+
+result_mv <- gla(X, n_eigenvalues = 4)
+print(result_mv)
+```
+
+```{r mv-recon}
+# Reconstruction preserves both dimensions
+recon_mv <- gla_reconstruct(result_mv)
+
+par(mfrow = c(1, 2))
+plot(t, X[1,], type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "x",
+     main = "Observable 1")
+lines(t, recon_mv[1,], col = "red", lwd = 2, lty = 2)
+
+plot(t, X[2,], type = "l", col = "steelblue", lwd = 2,
+     xlab = "Time", ylab = "y",
+     main = "Observable 2")
+lines(t, recon_mv[2,], col = "red", lwd = 2, lty = 2)
+```
+
+## Convergence and Diagnostics
+
+### Checking Convergence
+
+The `convergence` field indicates whether each eigenfunction converged:
+
+```{r convergence}
+cat("Convergence status:\n")
+print(result$convergence)
+cat("\nNumber converged:", sum(result$convergence), "/",
+    length(result$convergence), "\n")
+```
+
+### Eigenfunction Errors
+
+The `eigenfunction_errors` field measures how well the eigenvalue relationship is satisfied:
+
+```{r errors}
+cat("Eigenfunction errors:\n")
+print(round(result$eigenfunction_errors, 6))
+```
+
+Small errors indicate accurate eigenfunction computation.
+
+### Using More Iterations
+
+For better convergence, increase `max_iter` or use longer time series:
+
+```{r more-iter}
+# Longer time series
+t_long <- seq(0, 100, by = dt)
+y_long <- cos(2 * pi * freq * t_long)
+
+result_long <- gla(y_long, n_eigenvalues = 4)
+cat("Eigenfunction errors (long series):\n")
+print(round(result_long$eigenfunction_errors, 6))
+```
+
+## Comparison with Standard DMD
+
+| Feature | Standard DMD | GLA |
+|---------|--------------|-----|
+| Computes | Operator matrix + eigenvectors | Eigenfunctions directly |
+| Eigenvalues | Computed from matrix | Provided or estimated |
+| Basis | Spans data snapshots | Defined by eigenvalues |
+| Best for | General systems | Known/suspected eigenvalues |
+| Numerical stability | Depends on SVD | Depends on eigenvalue magnitude |
+
+### When to Use GLA
+
+1. **Known eigenvalues**: When you have theoretical predictions for eigenvalues
+2. **Targeted analysis**: When you want eigenfunctions for specific frequencies
+3. **Verification**: To verify DMD eigenvalues are genuine
+4. **Simple systems**: Where eigenvalue structure is known a priori
+
+## Advanced: Tolerance and Parameters
+
+### Convergence Tolerance
+
+```{r tolerance}
+# Stricter tolerance (slower convergence)
+result_strict <- gla(y, n_eigenvalues = 4, tol = 1e-8)
+cat("Converged with strict tolerance:", sum(result_strict$convergence), "\n")
+
+# Looser tolerance (faster convergence)
+result_loose <- gla(y, n_eigenvalues = 4, tol = 1e-4)
+cat("Converged with loose tolerance:", sum(result_loose$convergence), "\n")
+```
+
+### Maximum Iterations
+
+```{r max-iter}
+# Limit iterations (faster but may not converge)
+result_fast <- gla(y, n_eigenvalues = 4, max_iter = 50)
+cat("Iterations used:", result_fast$n_iter, "\n")
+cat("Converged:", sum(result_fast$convergence), "\n")
+```
+
+## Numerical Considerations
+
+### Eigenvalues with |λ| > 1
+
+For unstable eigenvalues (|λ| > 1), the standard GLA formula can be numerically unstable. The implementation uses reverse iteration to handle this case:
+
+```{r unstable}
+# Slightly unstable eigenvalue
+lambda_unstable <- 1.05 * exp(1i * 0.5)
+result_unstable <- gla(y, eigenvalues = c(lambda_unstable, Conj(lambda_unstable)))
+cat("Residual for unstable eigenvalue:", result_unstable$residuals[1], "\n")
+```
+
+### Eigenvalues Near Unit Circle
+
+Eigenvalues very close to |λ| = 1 may converge slowly. Longer time series help:
+
+```{r near-unit}
+# Slightly damped oscillation
+y_damped <- exp(-0.01 * t) * cos(2 * pi * freq * t)
+result_damped <- gla(y_damped, n_eigenvalues = 4)
+print(result_damped)
+```
+
+## Summary
+
+Generalized Laplace Analysis provides a direct method for computing Koopman eigenfunctions:
+
+- **No matrix construction**: Works directly with trajectory data
+- **Eigenvalue-focused**: Computes eigenfunctions for specific eigenvalues
+- **Interpretable**: Clear connection to Koopman theory
+- **Complementary**: Works alongside standard DMD methods
+
+## References
+
+1. Mezić, I. (2020). On Numerical Approximations of the Koopman Operator. arXiv:2009.05883, Section 3.
+
+2. Mezić, I. & Banaszuk, A. (2004). Comparison of systems with complex behavior. *Physica D*, 197(1-2):101-133.
+
+3. Budišić, M., Mohr, R., & Mezić, I. (2012). Applied Koopmanism. *Chaos*, 22(4), 047510.
