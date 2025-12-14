@@ -43,6 +43,11 @@ errors <- dmd_error(model, X)
 cat("Relative error:", errors$relative_error, "\n")
 ```
 
+![](img/output1.png)
+![](img/spectrum1.png)
+![](img/magnitude1.png)
+![](img/output2.png)
+
 ## Key Features
 
 - **DMD Analysis**: Extract modes, eigenvalues, and the Koopman matrix from time-series data
@@ -216,6 +221,8 @@ plot_ly() %>%
             line = list(color = "red"), name = "Predicted")
 ```
 
+![](img/3dplot.png)
+
 See `vignette("satellite-prediction")` for a complete tutorial with validation and error analysis.
 
 ## Example: Analyzing a Spiral System
@@ -259,6 +266,9 @@ plot(X[1,], X[2,], type = "l", col = "blue",
      xlab = "State 1", ylab = "State 2", main = "Phase Portrait")
 lines(forecast[1,], forecast[2,], col = "red", lty = 2)
 ```
+
+![](img/output3.png)
+![](img/traj_phase.png)
 
 ## Vignettes
 
